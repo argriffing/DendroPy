@@ -261,8 +261,8 @@ class NewickFelsensteinTest(datatest.DataObjectVerificationTestCase):
         Parse a subset of the trees in the Felsenstein Newick introduction.
         Leaves may be unnamed.
         """
-        trees = dendropy.TreeList.get_from_string("(,(,,),);", "newick")
-        self.assertEquals(len(trees), 1)
+        s = "(,(,,),);"
+        self.assertRaises(DataParseError, dendropy.TreeList, stream=StringIO(s), schema="NEWICK")
 
     def testFelsensteinExamplesNamed(self):
         """
@@ -283,9 +283,8 @@ A;
         Parse a subset of the trees in the Felsenstein Newick examples.
         Leaves may be unnamed.
         """
-        trees = dendropy.TreeList.get_from_string(
-                "(Alpha,Beta,Gamma,Delta,,Epsilon,,,);", "newick")
-        self.assertEquals(len(trees), 1)
+        s = "(Alpha,Beta,Gamma,Delta,,Epsilon,,,);"
+        self.assertRaises(DataParseError, dendropy.TreeList, stream=StringIO(s), schema="NEWICK")
 
 if __name__ == "__main__":
     unittest.main()
