@@ -244,25 +244,48 @@ class NewickFelsensteinTest(datatest.DataObjectVerificationTestCase):
     http://evolution.genetics.washington.edu/phylip/newicktree.html
     """
 
-    def testFelsensteinIntroduction(self):
+    def testFelsensteinIntroductionNamed(self):
+        """
+        Parse a subset of the trees in the Felsenstein Newick introduction.
+        Every leaf is named.
+        """
         trees = dendropy.TreeList.get_from_string("""
 (B,(A,C,E),D);
-(,(,,),);
 (B:6.0,(A:5.0,C:3.0,E:4.0):5.0,D:11.0);
 (B:6.0,(A:5.0,C:3.0,E:4.0)Ancestor1:5.0,D:11.0);
 """, "newick")
-        self.assertEquals(len(trees), 4)
+        self.assertEquals(len(trees), 3)
 
-    def testFelsensteinExamples(self):
+    def testFelsensteinIntroductionUnnamed(self):
+        """
+        Parse a subset of the trees in the Felsenstein Newick introduction.
+        Leaves may be unnamed.
+        """
+        trees = dendropy.TreeList.get_from_string("(,(,,),);", "newick")
+        self.assertEquals(len(trees), 1)
+
+    def testFelsensteinExamplesNamed(self):
+        """
+        Parse a subset of the trees in the Felsenstein Newick examples.
+        Every leaf is named.
+        """
         trees = dendropy.TreeList.get_from_string("""
 ((raccoon:19.19959,bear:6.80041):0.84600,((sea_lion:11.99700, seal:12.00300):7.52973,((monkey:100.85930,cat:47.14069):20.59201, weasel:18.87953):2.09460):3.87382,dog:25.46154);
 (Bovine:0.69395,(Gibbon:0.36079,(Orang:0.33636,(Gorilla:0.17147,(Chimp:0.19268, Human:0.11927):0.08386):0.06124):0.15057):0.54939,Mouse:1.21460):0.10;
 (Bovine:0.69395,(Hylobates:0.36079,(Pongo:0.33636,(G._Gorilla:0.17147, (P._paniscus:0.19268,H._sapiens:0.11927):0.08386):0.06124):0.15057):0.54939, Rodent:1.21460);
 A;
 ((A,B),(C,D));
-(Alpha,Beta,Gamma,Delta,,Epsilon,,,);
 """, "newick")
-        self.assertEquals(len(trees), 6)
+        self.assertEquals(len(trees), 5)
+
+    def testFelsensteinExamplesUnnamed(self):
+        """
+        Parse a subset of the trees in the Felsenstein Newick examples.
+        Leaves may be unnamed.
+        """
+        trees = dendropy.TreeList.get_from_string(
+                "(Alpha,Beta,Gamma,Delta,,Epsilon,,,);", "newick")
+        self.assertEquals(len(trees), 1)
 
 if __name__ == "__main__":
     unittest.main()
