@@ -238,7 +238,7 @@ class NewickDocumentWriterTest(datatest.AnnotatedDataObjectVerificationTestCase)
     def testRoundTrip(self):
         self.roundTripDataSetTest(self.reference_dataset, "newick", ignore_taxon_order=True)
 
-class NewickFelsensteinTest(datatest.DataObjectVerificationTestCase):
+class NewickFelsensteinTest(datatest.AnnotatedDataObjectVerificationTestCase):
     """
     Test example Newick strings provided by Felsenstein.
     http://evolution.genetics.washington.edu/phylip/newicktree.html
