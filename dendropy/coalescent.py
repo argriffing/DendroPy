@@ -23,7 +23,7 @@ Methods for working with Kingman's n-coalescent framework.
 import math
 
 from dendropy.utility import GLOBAL_RNG
-from dendropy.utility import probability
+from dendropy.mathlib import probability
 from dendropy import dataobject
 from dendropy import treecalc
 
@@ -50,77 +50,98 @@ except:
 
 def discrete_time_to_coalescence(n_genes,
                                  pop_size=None,
-                                 haploid=True,
                                  rng=None):
     """
     A random draw from the "Kingman distribution" (discrete time version):
     Time to go from n genes to n-1 genes; i.e. waiting time until two
-    lineages coalesce. **`pop_size` = HAPLOID population size in the default
-    formulation!**
+    lineages coalesce.
+    `pop_size` is the effective *haploid* population size; i.e., number of
+    genes in the population: 2 * N in a diploid population of N individuals, or
+    N in a haploid population of N individuals.
+    If `pop_size` is 1 or 0 or None, then time is in haploid population units;
+    i.e. where 1 unit of time equals 2N generations for a diploid population of
+    size N, or N generations for a haploid population of size N. Otherwise time
+    is in generations.
+
+
     """
-    if pop_size is None or pop_size <= n_genes:
-        raise Exception("Population size must be >> num genes")
-    if haploid:
-        N = pop_size
+    if not pop_size:
+        time_units = 1
     else:
-        N = pop_size * 2
+        time_units = pop_size * 2
     if rng is None:
         rng = GLOBAL_RNG
-    p = float(probability.binomial_coefficient(n_genes, 2)) / N
+    p = float(probability.binomial_coefficient(n_genes, 2)) / time_units
     tmrca = probability.geometric_rv(p)
-    if pop_size is not None and pop_size >= 0:
-        return tmrca * pop_size
-    else:
-        return tmrca
+    return tmrca * time_units
 
-def time_to_coalescence(n_genes, pop_size=None, rng=None):
+def time_to_coalescence(n_genes,
+        pop_size=None,
+        haploid=True,
+        rng=None):
     """
     A random draw from the "Kingman distribution" (continuous time version):
     Time to go from n genes to n-1 genes; i.e. waiting time until two
     lineages coalesce.  This is a random number with an exponential
-    distribution with a rate of (n choose 2). Time is in coalescent
-    units unless population size is > 1.
+    distribution with a rate of (n choose 2).
+    `pop_size` is the effective *haploid* population size; i.e., number of gene
+    in the population: 2 * N in a diploid population of N individuals,
+    or N in a haploid population of N individuals.
+    If `pop_size` is 1 or 0 or None, then time is in haploid population units;
+    i.e. where 1 unit of time equals 2N generations for a diploid population of
+    size N, or N generations for a haploid population of size N. Otherwise time
+    is in generations.
+
     """
     if rng is None:
         rng = GLOBAL_RNG
+    if not pop_size:
+        time_units = 1
+    else:
+        time_units = pop_size * 2
     rate = probability.binomial_coefficient(n_genes, 2)
     tmrca = rng.expovariate(rate)
-    if pop_size is not None and pop_size >= 0:
-        return tmrca * pop_size
-    else:
-        return tmrca
+    return tmrca * pop_size
 
-def expected_tmrca(n_genes, pop_size=None, rng=None):
+def expected_tmrca(n_genes, pop_size=None):
     """
-    Expected (mean) value for the TMRCA in coalescent time units unless
-    population size > 1
+    Expected (mean) value for the Time to the Most Recent Common Ancestor.
+    `n_genes` is the number of genes in the sample.
+    `pop_size` is the effective *haploid* population size; i.e., number of gene
+    in the population: 2 * N in a diploid population of N individuals,
+    or N in a haploid population of N individuals.
+    If `pop_size` is 1 or 0 or None, then time is in haploid population units;
+    i.e. where 1 unit of time equals 2N generations for a diploid population of
+    size N, or N generations for a haploid population of size N. Otherwise time
+    is in generations.
+
     """
-    if rng is None:
-        rng = GLOBAL_RNG
     nc2 = probability.binomial_coefficient(n_genes, 2)
     tmrca = (float(1)/nc2)
-    if pop_size and pop_size >= 0:
-        return tmrca * pop_size
-    else:
-        return tmrca
+    return tmrca * pop_size
 
 def coalesce(nodes,
              pop_size=None,
              period=None,
-             rng=None):
+             rng=None,
+             use_expected_tmrca=False):
     """
+    Returns a list of nodes that have not yet coalesced once `period` is
+    exhausted.
+
     `nodes` is a list of DendroPy Nodes representing a sample of
     neutral genes (some, all, or none of these nodes may have
     descendent nodes).
 
-    `pop_size` is the effective population size of a Wright-Fisher
-    population in which thes genes are evolving, and must be given for
-    correct behaviour if time is generations.
+    `pop_size` is the effective *haploid* population size; i.e., number of gene
+    in the population: 2 * N in a diploid population of N individuals,
+    or N in a haploid population of N individuals.
 
-    `period` is the time in generations (if pop_size is not None) or
-    in populaton/coalescent units (if pop_size is given) that the
-    genes have to coalesce. If not given, then the the method will
-    continue to coalesce the genes until only one gene is left.
+    `period` is the time that the genes have to coalesce.  If `pop_size` is 1
+    or 0 or None, then time is in haploid population units; i.e. where 1 unit
+    of time equals 2N generations for a diploid population of size N, or N
+    generations for a haploid population of size N. Otherwise time is in
+    generations.
 
     This function will a draw a coalescence time, `t`, from
     EXP(1/num_genes). If `period` is given and if this time is less
@@ -173,10 +194,13 @@ def coalesce(nodes,
     # exceeds the time remaining, and triggers a break from the loop
     while len(nodes) > 1:
 
-        # draw a time to coalesce: this will be an exponential random
-        # variable with parameter (rate) of BINOMIAL[n_genes 2]
-        # multiplied pop_size
-        tmrca = time_to_coalescence(len(nodes), pop_size=pop_size, rng=rng)
+        if use_expected_tmrca:
+            tmrca = expected_tmrca(len(nodes), pop_size=pop_size)
+        else:
+            # draw a time to coalesce: this will be an exponential random
+            # variable with parameter (rate) of BINOMIAL[n_genes 2]
+            # multiplied pop_size
+            tmrca = time_to_coalescence(len(nodes), pop_size=pop_size, rng=rng)
 
         # if no time_remaining is given (i.e, we want to coalesce till
         # there is only one gene left) or, if we are working under the
@@ -229,28 +253,33 @@ def coalesce(nodes,
     # return the list of nodes that have not coalesced
     return nodes
 
-def node_waiting_time_pairs(tree):
+def node_waiting_time_pairs(tree, check_ultrametricity_prec=0.0000001):
     """Returns list of tuples of (node, coalescent interval [= time between
     last coalescent event and current node age])"""
-    tree.calc_node_ages()
+    tree.calc_node_ages(check_prec=check_ultrametricity_prec)
     ages = [(n, n.age) for n in tree.internal_nodes()]
-    ages.sort(lambda x, y: int(x[1] - y[1]))
+    ages.sort(key=lambda x: x[1])
     intervals = []
     intervals.append(ages[0])
     for i, d in enumerate(ages[1:]):
-        intervals.append( (d[0], d[1] - ages[i][1]) )
+        nd = d[0]
+        prev_nd = ages[i][0]
+        intervals.append( (nd, nd.age - prev_nd.age) )
     return intervals
 
-def extract_coalescent_frames(tree):
+def extract_coalescent_frames(tree, check_ultrametricity_prec=0.0000001):
     """Returns dictionary, with key = number of alleles, and values = waiting time for
     coalescent for the given tree"""
-    nwti = node_waiting_time_pairs(tree)
+    nwti = node_waiting_time_pairs(tree, check_ultrametricity_prec=check_ultrametricity_prec)
 #     num_genes = len(tree.taxon_set)
     num_genes = len(tree.leaf_nodes())
     num_genes_wt = {}
     for n in nwti:
         num_genes_wt[num_genes] = n[1]
         num_genes = num_genes - len(n[0].child_nodes()) + 1
+
+    import sys
+    num_alleles_list = sorted(num_genes_wt.keys(), reverse=True)
     return num_genes_wt
 
 def log_probability_of_coalescent_frames(coalescent_frames, haploid_pop_size):
@@ -274,11 +303,12 @@ def log_probability_of_coalescent_frames(coalescent_frames, haploid_pop_size):
         lp =  lp + math.log(k2N) - (k2N * t)
     return lp
 
-def log_probability_of_coalescent_tree(tree, haploid_pop_size):
+def log_probability_of_coalescent_tree(tree, haploid_pop_size, check_ultrametricity_prec=0.0000001):
     """
     Wraps up extraction of coalescent frames and reporting of probability.
     """
-    return log_probability_of_coalescent_frames(extract_coalescent_frames(tree), haploid_pop_size)
+    return log_probability_of_coalescent_frames(extract_coalescent_frames(tree),
+            haploid_pop_size)
 
 if de_hoon_statistics:
 

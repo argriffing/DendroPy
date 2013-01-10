@@ -23,11 +23,12 @@ Tests creation, reading, update, deletion of Taxon and TaxonSet objects.
 import unittest
 from cStringIO import StringIO
 from dendropy.utility import error
+from dendropy.test.support import pathmap
 from dendropy.test.support import datatest
 from dendropy.test.support.extendedtest import ExtendedTestCase
 import dendropy
 
-class TaxaTest(datatest.DataObjectVerificationTestCase):
+class TaxaTest(datatest.AnnotatedDataObjectVerificationTestCase):
 
     def setUp(self):
         self.labels = []
@@ -102,7 +103,7 @@ class TaxaTest(datatest.DataObjectVerificationTestCase):
         self.assertIs(ts.get_taxon(label="Q"), None)
         self.assertIs(ts.get_taxon(label="T1"), ts[0])
 
-class TaxonSetPartitionTest(datatest.DataObjectVerificationTestCase):
+class TaxonSetPartitionTest(datatest.AnnotatedDataObjectVerificationTestCase):
 
     def setUp(self):
         self.taxon_set = dendropy.TaxonSet([
@@ -157,7 +158,7 @@ class TaxonSetPartitionTest(datatest.DataObjectVerificationTestCase):
         tsp = dendropy.TaxonSetPartition(self.taxon_set, membership_lists=self.membership_lists)
         self.verify_subsets(tsp.subsets(), use_label_indices=True)
 
-class TaxonSetMappingTest(datatest.DataObjectVerificationTestCase):
+class TaxonSetMappingTest(datatest.AnnotatedDataObjectVerificationTestCase):
 
     def setUp(self):
         self.domain_taxa = dendropy.TaxonSet([
@@ -217,6 +218,32 @@ class TaxonSetMappingTest(datatest.DataObjectVerificationTestCase):
     def testFromDict(self):
         tsm = dendropy.TaxonSetMapping(mapping_dict=self.mapping_dict)
         self.verifyMapping(tsm)
+
+class FullCopyTaxaTestCase(datatest.AnnotatedDataObjectVerificationTestCase):
+
+    def testFullCopyTaxonSet(self):
+        src_path = pathmap.char_source_path("crotaphytus_bicinctores.cytb.aligned.nexml")
+        d = dendropy.DataSet.get_from_path(src_path, "nexml")
+        taxon_set1 = d.taxon_sets[0]
+        taxon_set2 = taxon_set1.fullcopy()
+        self.assertTrue(taxon_set1 is not taxon_set2)
+        self.assertDistinctButEqualTaxonSet(taxon_set1, taxon_set2, distinct_taxon_objects=True)
+        self.assertEqual(len(taxon_set1), len(taxon_set2))
+        for idx, taxon1 in enumerate(taxon_set1):
+            taxon2 = taxon_set2[idx]
+            self.assertTrue(taxon1 is not taxon2)
+            self.assertEqual(taxon1.label, taxon2.label)
+            for idx, a1 in enumerate(taxon1.annotations):
+                a2 = taxon2.annotations[idx]
+                self.assertTrue(a1 is not a2)
+                self.assertEqual(a1.name, a2.name)
+                self.assertEqual(a1.value, a2.value)
+        self.assertEqual(len(taxon_set1.annotations), len(taxon_set2.annotations))
+        for idx, a1 in enumerate(taxon_set1.annotations):
+            a2 = taxon_set2.annotations[idx]
+            self.assertTrue(a1 is not a2)
+            self.assertEqual(a1.name, a2.name)
+            self.assertEqual(a1.value, a2.value)
 
 if __name__ == "__main__":
     unittest.main()

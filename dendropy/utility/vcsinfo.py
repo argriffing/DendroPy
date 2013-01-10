@@ -135,7 +135,7 @@ class Revision(object):
         self._commit_tag = self.get_commit_tag()
         self._branch_name = self.get_branch_name()
         self._description = self.get_description()
-        self._long_description = self.get_long_description()
+        self._long_description = self._build_long_description()
         self._is_available = True
 
     def _run_vcs(self, cmd):
@@ -150,11 +150,10 @@ class Revision(object):
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE)
-            retcode = p.wait()
+            stdout, stderr = p.communicate()
+            retcode = p.returncode
         except OSError, e:
             return -999, "", str(e)
-        stdout = p.stdout.read()
-        stderr = p.stderr.read()
         return retcode, stdout, stderr
 
     def _vcs_available(self):
@@ -167,7 +166,8 @@ class Revision(object):
         return True
 
     def get_commit_id(self):
-        cmd = "show --quiet --pretty=format:'%H' HEAD"
+        # cmd = "show --quiet --pretty=format:'%H' HEAD"
+        cmd = "rev-parse --short HEAD"
         retcode, stdout, stderr = self._run_vcs(cmd)
         return stdout.replace('\n', '')
 
@@ -195,9 +195,10 @@ class Revision(object):
         cmd = "symbolic-ref HEAD"
         retcode, stdout, stderr = self._run_vcs(cmd)
         if retcode != 0:
-#            if "fatal: ref HEAD is not a symbolic ref" in stderr:
-#                raise VersionControlInfo.NonBranchException("Current branch is invalid: detached HEAD")
-            return None
+            if "fatal: ref HEAD is not a symbolic ref" in stderr:
+                return "(no branch)"
+            else:
+                return None
         else:
             return stdout.replace('\n', '').split('/')[-1]
 
@@ -205,9 +206,10 @@ class Revision(object):
         cmd = "describe --tags --long --always --abbrev=12"
         retcode, stdout, stderr = self._run_vcs(cmd)
         if retcode != 0:
-#            if "fatal: No names found, cannot describe anything." in stderr:
-#                raise VersionControlInfo.UntaggedException("Revision is untagged")
-            return None
+            if "fatal: No names found, cannot describe anything." in stderr:
+                return "(unnamed)"
+            else:
+                return None
         else:
             return stdout.replace('\n', '')
 
@@ -219,6 +221,19 @@ class Revision(object):
             parts.append("on branch '%s'" % self.branch_name)
         if self.commit_date:
             parts.append("committed on %s" % str(self.commit_date))
+        if parts:
+            return ", ".join(parts)
+        else:
+            return None
+
+    def _build_long_description(self):
+        parts = []
+        if self._commit_id:
+            parts.append(self._commit_id)
+        if self._branch_name:
+            parts.append("on branch '%s'" % self._branch_name)
+        if self._commit_date:
+            parts.append("committed on %s" % str(self._commit_date))
         if parts:
             return ", ".join(parts)
         else:

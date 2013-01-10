@@ -28,7 +28,7 @@ from dendropy.test.support import pathmap
 from dendropy.test.support import datagen
 import dendropy
 
-class TreeCreateTest(datatest.DataObjectVerificationTestCase):
+class TreeCreateTest(datatest.AnnotatedDataObjectVerificationTestCase):
 
     def setUp(self):
         self.tree1 = datagen.four_taxon_tree1()
@@ -72,7 +72,7 @@ class TreeCreateTest(datatest.DataObjectVerificationTestCase):
         self.assertDistinctButEqual(self.tree1, tree2, distinct_taxa=False, equal_oids=False)
 
     def testTreeFromFileMixedPosAndKeywordArgs(self):
-        self.assertRaises(error.MultipleInitializationSourceError, dendropy.Tree, self.tree1, tream=StringIO(self.tree1_newick_str), schema="newick")
+        self.assertRaises(error.MultipleInitializationSourceError, dendropy.Tree, self.tree1, stream=StringIO(self.tree1_newick_str), schema="newick")
 
     def testTreeFromTreeWithExtraKeywordArgsOK(self):
         tree2 = dendropy.Tree(self.tree1, stream=None, schema=None)

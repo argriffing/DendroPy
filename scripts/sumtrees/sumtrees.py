@@ -22,7 +22,7 @@ CLI wrapper for tree summarization.
 
 import os
 import sys
-import textwrap
+import re
 from optparse import OptionParser
 from optparse import OptionGroup
 
@@ -49,7 +49,7 @@ from dendropy.dataio import multi_tree_source_iter
 from dendropy.dataio import newick
 from dendropy.utility.messaging import ConsoleMessenger
 from dendropy.utility.cli import confirm_overwrite, show_splash
-from dendropy.utility import statistics
+from dendropy.mathlib import statistics
 
 _program_name = "SumTrees"
 _program_subtitle = "Phylogenetic Tree Split Support Summarization"
@@ -799,12 +799,15 @@ and 'mean-length' if no target trees are specified and the '--ultrametric' direc
     support_summarization = "%s of support for each split %s" % (support_units, support_show)
 
     tt_trees = []
+    support_comment_pattern = re.compile(r'support\s*=\s*[0-9.eE-]+,?', re.I)
     if target_tree_filepath is not None:
         messenger.send_info("Mapping support to target tree ...")
+        # if adding node metadata, we extract it from the target tree first
         for tree in tree_source_iter(stream=open(target_tree_filepath, 'r'),
                 schema="nexus/newick",
                 taxon_set=master_taxon_set,
-                as_rooted=opts.rooted_trees):
+                as_rooted=opts.rooted_trees,
+                extract_comment_metadata=tsum.add_node_metadata):
             if opts.root_target:
                 if opts.outgroup:
                     pass
@@ -813,6 +816,13 @@ and 'mean-length' if no target trees are specified and the '--ultrametric' direc
             if opts.rooted_trees and not tree.is_rooted:
                 messenger.send_error("Support trees are treated as rooted, but target tree is unrooted. Root target tree(s) and re-run, or run using the '--root-target' flag.")
                 sys.exit(1)
+
+            # strip out existing support statement
+            # if tsum.add_node_metadata:
+            #     for nd in tree.postorder_node_iter():
+            #         for nd_comment_idx, comment in enumerate(nd.comments):
+            #             nd.comments[nd_comment_idx] = support_comment_pattern.sub("", nd.comments[nd_comment_idx])
+
             stree = tsum.map_split_support_to_tree(tree,
                     master_split_distribution)
             tt_trees.append(stree)
@@ -920,13 +930,20 @@ and 'mean-length' if no target trees are specified and the '--ultrametric' direc
     if opts.to_newick_format:
         output_dataset.write(output_dest,
                 "newick",
-                edge_lengths=True,
-                write_rooting=True,
-                internal_labels=True,
-                annotations_as_comments=True,
+                suppress_rooting=False,
+                suppress_edge_lengths=False,
+                unquoted_underscores=False,
+                preserve_spaces=False,
+                store_tree_weights=False,
+                suppress_annotations=False,
                 annotations_as_nhx=False,
-                write_item_comments=False,
-                )
+                suppress_item_comments=False,
+                suppress_leaf_taxon_labels=False,
+                suppress_leaf_node_labels=True,
+                suppress_internal_taxon_labels=False,
+                suppress_internal_node_labels=False,
+                node_label_element_separator=' ',
+                node_label_compose_func=None)
     else:
         if opts.include_taxa_block:
             simple = False
@@ -958,14 +975,21 @@ and 'mean-length' if no target trees are specified and the '--ultrametric' direc
         output_dataset.write(output_dest,
                 "nexus",
                 simple=simple,
-                edge_lengths=opts.edge_summarization != 'unweighted',
-                write_rooting=True,
-                internal_labels=True,
-                annotations_as_comments=True,
+                file_comments=comment,
+                suppress_rooting=False,
+                suppress_edge_lengths=opts.edge_summarization == 'unweighted',
+                unquoted_underscores=False,
+                preserve_spaces=False,
+                store_tree_weights=False,
+                suppress_annotations=False,
                 annotations_as_nhx=False,
-                write_item_comments=False,
-                comment=comment)
-
+                suppress_item_comments=False,
+                suppress_leaf_taxon_labels=False,
+                suppress_leaf_node_labels=True,
+                suppress_internal_taxon_labels=False,
+                suppress_internal_node_labels=False,
+                node_label_element_separator=' ',
+                node_label_compose_func=None)
 
     if trprobs_dest:
         messenger.send_info("Writing tree probabilities ...")
@@ -978,19 +1002,28 @@ and 'mean-length' if no target trees are specified and the '--ultrametric' direc
             tree.probability = prop
             tree.count = count
             tree.cumulative_probability = cumulative_prob
-            tree.annotate('count')
-            tree.annotate('probability')
-            tree.annotate('cumulative_probability')
+            tree.annotations.add_bound_attribute('count')
+            tree.annotations.add_bound_attribute('probability')
+            tree.annotations.add_bound_attribute('cumulative_probability')
             tree.label = "Tree%d" % (idx+1)
         tree_list.write_to_stream(trprobs_dest,
                 'nexus',
-                edge_lengths=False,
-                write_rooting=False,
-                internal_labels=False,
-                annotations_as_comments=True,
+                simple=simple,
+                suppress_rooting=True,
+                suppress_edge_lengths=True,
+                suppress_internal_labels=True,
+                unquoted_underscores=False,
+                preserve_spaces=False,
+                store_tree_weights=False,
+                suppress_annotations=False,
                 annotations_as_nhx=False,
-                write_item_comments=False
-                )
+                suppress_item_comments=True,
+                suppress_leaf_taxon_labels=False,
+                suppress_leaf_node_labels=True,
+                suppress_internal_taxon_labels=False,
+                suppress_internal_node_labels=False,
+                node_label_element_separator=' ',
+                node_label_compose_func=None)
 
     if split_edges_dest:
         messenger.send_info("Writing split edge lengths ...")

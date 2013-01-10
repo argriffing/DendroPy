@@ -32,10 +32,10 @@ from dendropy.utility.error import DataParseError
 import dendropy
 from dendropy.dataio import newick
 
-class NewickBasicParseTest(datatest.DataObjectVerificationTestCase):
+class NewickBasicParseTest(datatest.AnnotatedDataObjectVerificationTestCase):
 
     def testBadInit(self):
-        self.assertRaises(DataParseError, dendropy.TreeList, stream=StringIO("(a,(b,c))a"), schema="NEWICK")
+        self.assertRaises(DataParseError, dendropy.TreeList, stream=StringIO("(a,(b,c))a"), schema="NEWICK", suppress_internal_node_taxa=False)
         self.assertRaises(DataParseError, dendropy.TreeList, stream=StringIO("(a,(b,c)) (b,(a,c))"), schema="NEWICK")
         self.assertRaises(DataParseError, dendropy.TreeList, stream=StringIO("(a,(b,c)) (d,(e,f))"), schema="NEWICK")
         self.assertRaises(DataParseError, dendropy.TreeList, stream=StringIO("(a,(b,c)),"), schema="NEWICK")
@@ -95,7 +95,7 @@ class NewickBasicParseTest(datatest.DataObjectVerificationTestCase):
                 )
         self.assertEquals(len(trees), 1)
 
-class NewickEdgeLengthParsing(datatest.DataObjectVerificationTestCase):
+class NewickEdgeLengthParsing(datatest.AnnotatedDataObjectVerificationTestCase):
 
 
     def testEdgeLengths1(self):
@@ -183,7 +183,7 @@ T4:4.4e+8)'this is an internal node called "i2"':4.0e+1)i3:4.0E-4,
                 label = nd.label
             self.assertAlmostEquals(nd.edge.length, expected[label])
 
-class NewickTreeListWriterTest(datatest.DataObjectVerificationTestCase):
+class NewickTreeListWriterTest(datatest.AnnotatedDataObjectVerificationTestCase):
 
     def setUp(self):
         self.ref_tree_list = datagen.reference_tree_list()
@@ -209,7 +209,7 @@ class NewickTreeListWriterTest(datatest.DataObjectVerificationTestCase):
                 distinct_taxa=False,
                 equal_oids=None)
 
-class NewickDocumentReaderTest(datatest.DataObjectVerificationTestCase):
+class NewickDocumentReaderTest(datatest.AnnotatedDataObjectVerificationTestCase):
 
     def setUp(self):
         reference_tree_list = datagen.reference_tree_list()
@@ -229,7 +229,7 @@ class NewickDocumentReaderTest(datatest.DataObjectVerificationTestCase):
         test_dataset = dendropy.DataSet(stream=pathmap.tree_source_stream(datagen.reference_trees_filename(schema="newick")), schema="newick")
         self.assertDistinctButEqual(self.reference_dataset, test_dataset, ignore_taxon_order=True)
 
-class NewickDocumentWriterTest(datatest.DataObjectVerificationTestCase):
+class NewickDocumentWriterTest(datatest.AnnotatedDataObjectVerificationTestCase):
 
     def setUp(self):
         reference_tree_list = datagen.reference_tree_list()
@@ -285,6 +285,31 @@ A;
         """
         s = "(Alpha,Beta,Gamma,Delta,,Epsilon,,,);"
         self.assertRaises(DataParseError, dendropy.TreeList, stream=StringIO(s), schema="NEWICK")
+
+class NewickInternalTaxaTest(datatest.AnnotatedDataObjectVerificationTestCase):
+
+    def setUp(self):
+        self.tree_str = """(t1, (t2, (t3, (t4, t5)i1)i2)i3)i0;"""
+        self.expected_internal_labels = ['i1', 'i2', 'i3', 'i0']
+        self.expected_external_labels = ['t1', 't2', 't3', 't4', 't5']
+
+    def check(self, tree, expected_taxon_labels):
+        self.assertEqual(len(tree.taxon_set), len(expected_taxon_labels))
+        tax_labels = [t.label for t in tree.taxon_set]
+        for label in expected_taxon_labels:
+            self.assertTrue(label in tax_labels)
+
+    def testDefaultInternalTaxaParsing(self):
+        tree = dendropy.Tree.get_from_string(self.tree_str, "newick")
+        self.check(tree, self.expected_external_labels)
+
+    def testSuppressInternalTaxaParsing(self):
+        tree = dendropy.Tree.get_from_string(self.tree_str, "newick", suppress_internal_node_taxa=True)
+        self.check(tree, self.expected_external_labels)
+
+    def testDefaultInternalTaxaParsing(self):
+        tree = dendropy.Tree.get_from_string(self.tree_str, "newick", suppress_internal_node_taxa=False)
+        self.check(tree, self.expected_external_labels + self.expected_internal_labels)
 
 if __name__ == "__main__":
     unittest.main()

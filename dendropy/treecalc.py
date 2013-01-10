@@ -43,7 +43,8 @@ class PatristicDistanceMatrix(object):
         self.max_dist_nodes = None
         self._mrca = {}
         if tree is not None:
-            self.calc(tree)
+            self.tree = tree
+            self.calc()
 
     def __call__(self, taxon1, taxon2):
         """
@@ -73,10 +74,10 @@ class PatristicDistanceMatrix(object):
         """
         if tree is not None:
             self.tree = tree
-        assert tree is not None
+        assert self.tree is not None
         if not hasattr(self.tree, "split_edges"):
             treesplit.encode_splits(self.tree)
-        self.taxon_set = tree.taxon_set
+        self.taxon_set = self.tree.taxon_set
         self._pat_dists = {}
         for i1, t1 in enumerate(self.taxon_set):
             self._pat_dists[t1] = {}
@@ -85,7 +86,7 @@ class PatristicDistanceMatrix(object):
             self.max_dist_taxa = None
             self.max_dist_nodes = None
 
-        for node in tree.postorder_node_iter():
+        for node in self.tree.postorder_node_iter():
             children = node.child_nodes()
             if len(children) == 0:
                 node.desc_paths = {node : 0}
@@ -461,3 +462,20 @@ def fitch_up_pass(preorder_node_list, attr_name="state_sets", taxa_to_state_set_
             #                    (str(curr_ss), str(par_ss), str(left_ss), str(right_ss), str(final_ss)))
             result.append(final_ss)
         setattr(nd, attr_name, result)
+
+
+def mason_gamer_kellogg_score(tree1, tree2):
+    """
+    Mason-Gamer and Kellogg. Testing for phylogenetic conflict among molecular
+    data sets in the tribe Triticeae (Gramineae). Systematic Biology (1996)
+    vol. 45 (4) pp. 524
+    """
+    if tree1.taxon_set is not tree2.taxon_set:
+        raise Exception("Input tres have different TaxonSet object references")
+    if not hasattr(tree1, "split_edges"):
+        tree1.update_splits()
+    se1 = tree1.split_edges
+    if not hasattr(tree2, "split_edges"):
+        tree2.update_splits()
+    se2 = tree2.split_edges
+    splits = sorted(list(set(se1.keys() + se2.keys())))

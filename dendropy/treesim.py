@@ -25,7 +25,7 @@ import copy
 import math
 
 from dendropy.utility import GLOBAL_RNG
-from dendropy.utility import probability
+from dendropy.mathlib import probability
 from dendropy import coalescent
 from dendropy import dataobject
 from dendropy import treemanip
@@ -492,39 +492,45 @@ def pop_gen_tree(tree=None,
     Otherwise, a Yule tree is generated based on the given taxon_set.
     Either `tree` or `taxon_set` must be given.
 
-    The timing of the divergences can be
-    controlled by specifying a vector of ages, `ages`. This should be
-    sequences of values specifying the ages of the first, second,
-    third etc. divergence events, in terms of time from the present,
-    specified either in generations (if the pop_sizes vector is given)
-    or population units (if the pop_size vector is not given). If an
-    ages vector is given and there are less than num_pops-1 of these, then
-    an exception is raised.
+    The timing of the divergences can be controlled by specifying a vector of
+    ages, `ages`. This should be sequences of values specifying the ages of the
+    first, second, third etc. divergence events, in terms of time from the
+    present, specified either in generations (if the `pop_sizes` vector is
+    given) or population units (if the pop_size vector is not given).
+    If an ages vector is given and there are less than num_pops-1 of these,
+    then an exception is raised.
 
     The number of gene lineages per population can be specified through
     the 'num_genes', which can either be an scalar integer or a list.
     If it is an integer, all the population get the same number of
     genes. If it is a list, it must be at least as long as num_pops.
 
-    The population sizes of each edge can be specified using the
-    `pop_sizes` vector, which should be a sequence of values
-    specifying the population sizes of the edges in postorder. If the
-    pop_size vector is given, then it must be at least as long as
-    there are branches on a tree (=2 * num_pops + 1), otherwise it is an
-    error. If it is not given, then the branch lengths of the population
-    trees will be in population units.
+    The population sizes of each edge can be specified using the `pop_sizes`
+    vector, which should be a sequence of values specifying the population
+    sizes of the edges in postorder. If the pop_size vector is given, then it
+    must be at least as long as there are branches on a tree, i.e. 2 * num_pops
+    + 1, otherwise it is an error.  The population size should be the effective
+    *haploid* population size; i.e., number of gene copies in the population: 2
+    * N in a diploid population of N individuals, or N in a haploid population
+    * of N individuals.
 
-    This function first generates a tree using a pure-birth model with
-    a uniform birth rate of 1.0. If an ages vector is given, it then
-    sweeps through the internal nodes, assigning branch lengths such
-    that the divergence events correspond to the ages in the
-    vector. If a population sizes vector is given, it then visits all
-    the edges in postorder, assigning population sizes to the
-    attribute 'pop_size' (which is persisted as an annotation). During
-    this, if an ages vector was *not* given, then the edge lengths are
-    multiplied by the population size of the edge so the branch length
-    units will be in generations. If an ages vector was given, then it
-    is assumed that the ages are already in the proper scale/units.
+    If `pop_size` is 1 or 0 or None, then edge lengths of the tree are in
+    haploid population units; i.e. where 1 unit of time equals 2N generations
+    for a diploid population of size N, or N generations for a haploid
+    population of size N. Otherwise edge lengths of the tree are in
+    generations.
+
+    This function first generates a tree using a pure-birth model with a
+    uniform birth rate of 1.0. If an ages vector is given, it then sweeps
+    through the internal nodes, assigning branch lengths such that the
+    divergence events correspond to the ages in the vector. If a population
+    sizes vector is given, it then visits all the edges in postorder, assigning
+    population sizes to the attribute with the name specified in
+    'pop_size_attr' (which is persisted as an annotation). During this, if an
+    ages vector was *not* given, then the edge lengths are multiplied by the
+    population size of the edge so the branch length units will be in
+    generations. If an ages vector was given, then it is assumed that the ages
+    are already in the proper scale/units.
     """
 
     # get our random number generator
@@ -577,19 +583,125 @@ def pop_gen_tree(tree=None,
     if samples is not None:
         for index, leaf in enumerate(tree.leaf_iter()):
             setattr(leaf, num_genes_attr, samples[index])
-            leaf.annotate(num_genes_attr)
+            leaf.annotations.add_bound_attribute(num_genes_attr)
 
     # set the population sizes
     if pop_sizes is not None:
         index = 0
         for edge in tree.postorder_edge_iter():
             setattr(edge, pop_size_attr, pop_sizes[index])
-            edge.annotate(pop_size_attr)
+            edge.annotations.add_bound_attribute(pop_size_attr)
             if ages is None:
                 edge.length = edge.length * getattr(edge, pop_size_attr)
             index = index + 1
 
     return tree
+
+def contained_coalescent(containing_tree,
+        gene_to_containing_taxon_map,
+        edge_pop_size_attr="pop_size",
+        default_pop_size=1,
+        rng=None):
+    """
+    Returns a gene tree simulated under the coalescent contained within a
+    population or species tree.
+
+        `containing_tree`
+            The population or species tree. If `edge_pop_size_map` is not None,
+            and population sizes given are non-trivial (i.e., >1), then edge
+            lengths on this tree are in units of generations. Otherwise edge
+            lengths are in population units; i.e. 2N generations for diploid
+            populations of size N, or N generations for diploid populations of
+            size N.
+
+        `gene_to_containing_taxon_map`
+            A TaxonSetMapping object mapping Taxon objects in the
+            `containing_tree` TaxonSet to corresponding Taxon objects in the
+            resulting gene tree.
+
+        `edge_pop_size_attr`
+            Name of attribute of edges that specify population size. By default
+            this is "pop_size". If this attribute does not exist,
+            `default_pop_size` will be used.  The value for this attribute
+            should be the haploid population size or the number of genes;
+            i.e.  2N for a diploid population of N individuals, or N for a
+            haploid population of N individuals. This value determines how
+            branch length units are interpreted in the input tree,
+            `containing_tree`.  If a biologically-meaningful value, then branch
+            lengths on the `containing_tree` are properly read as generations.
+            If not (e.g. 1 or 0), then they are in population units, i.e. where
+            1 unit of time equals 2N generations for a diploid population of
+            size N, or N generations for a haploid population of size N.
+            Otherwise time is in generations. If this argument is None, then
+            population sizes default to `default_pop_size`.
+
+        `default_pop_size`
+            Population size to use if `edge_pop_size_attr` is None or
+            if an edge does not have the attribute. Defaults to 1.
+
+    The returned gene tree will have the following extra attributes:
+
+        `pop_node_genes`
+            A dictionary with nodes of `containing_tree` as keys and a list of gene
+            tree nodes that are uncoalesced as values.
+
+    Note that this function does very much the same thing as
+    `constrained_kingman()`, but provides a very different API.
+    """
+
+    if rng is None:
+        rng = GLOBAL_RNG
+
+    gene_tree_taxon_set = gene_to_containing_taxon_map.domain_taxon_set
+    if gene_tree_taxon_set is None:
+        gene_tree_taxon_set = dendropy.TaxonSet()
+        for gene_taxa in pop_gene_taxa_map:
+            for taxon in gene_taxa:
+                gene_tree_taxon_set.add(taxon)
+    gene_tree = dataobject.Tree(taxon_set=gene_tree_taxon_set)
+    gene_tree.is_rooted = True
+
+    pop_node_genes = {}
+    pop_gene_taxa = gene_to_containing_taxon_map.reverse
+    for nd in containing_tree.postorder_node_iter():
+        if nd.taxon and nd.taxon in pop_gene_taxa:
+            pop_node_genes[nd] = []
+            gene_taxa = pop_gene_taxa[nd.taxon]
+            for gene_taxon in gene_taxa:
+                gene_node = dataobject.Node()
+                gene_node.taxon = gene_taxon
+                pop_node_genes[nd].append(gene_node)
+            #gene_nodes = [dataobject.Node() for i in range(len(gene_taxa))]
+            #for gidx, gene_node in enumerate(gene_nodes):
+            #    gene_node.taxon = gene_taxa[gidx]
+            #    pop_node_genes[nd].append(gene_node)
+
+    for edge in containing_tree.postorder_edge_iter():
+
+        if edge_pop_size_attr and hasattr(edge, edge_pop_size_attr):
+            pop_size = getattr(edge, edge_pop_size_attr)
+        else:
+            pop_size = default_pop_size
+        if edge.head_node.parent_node is None:
+            if len(pop_node_genes[edge.head_node]) > 1:
+                final = coalescent.coalesce(nodes=pop_node_genes[edge.head_node],
+                                            pop_size=default_pop_size,
+                                            period=None,
+                                            rng=rng)
+            else:
+                final = pop_node_genes[edge.head_node]
+            gene_tree.seed_node = final[0]
+        else:
+            uncoal = coalescent.coalesce(nodes=pop_node_genes[edge.head_node],
+                                         pop_size=pop_size,
+                                         period=edge.length,
+                                         rng=rng)
+            if edge.tail_node not in pop_node_genes:
+                pop_node_genes[edge.tail_node] = []
+            pop_node_genes[edge.tail_node].extend(uncoal)
+
+    gene_tree.pop_node_genes = pop_node_genes
+    return gene_tree
 
 def pure_kingman(taxon_set, pop_size=1, rng=None):
     """
@@ -604,7 +716,27 @@ def pure_kingman(taxon_set, pop_size=1, rng=None):
     seed_node = coalescent.coalesce(nodes=nodes,
                                     pop_size=pop_size,
                                     period=None,
-                                    rng=rng)[0]
+                                    rng=rng,
+                                    use_expected_tmrca=True)[0]
+    tree = dataobject.Tree(taxon_set=taxon_set, seed_node=seed_node)
+    return tree
+
+def mean_kingman(taxon_set, pop_size=1):
+    """
+    Returns a tree with coalescent intervals given by the expected times under
+    Kingman's neutral coalescent.
+    """
+
+    # get our random number generator
+    if rng is None:
+        rng = GLOBAL_RNG # use the global rng by default
+
+    nodes = [dataobject.Node(taxon=t) for t in taxon_set]
+    seed_node = coalescent.coalesce(nodes=nodes,
+                                    pop_size=pop_size,
+                                    period=None,
+                                    rng=rng,
+                                    use_expected_tmrca=True)[0]
     tree = dataobject.Tree(taxon_set=taxon_set, seed_node=seed_node)
     return tree
 
@@ -627,7 +759,18 @@ def constrained_kingman(pop_tree,
     of a class derived from this with the following attribute
     `num_genes` -- the number of gene samples from each population in the
     present.  Each edge on the tree should also have the attribute
-    `pop_size` -- the effective size of the population at this time.
+
+    `pop_size_attr` is the attribute name of the edges of `pop_tree` that
+    specify the population size. By default it is `pop_size`. The should
+    specify the effective *haploid* population size; i.e., number of gene
+    in the population: 2 * N in a diploid population of N individuals,
+    or N in a haploid population of N individuals.
+
+    If `pop_size` is 1 or 0 or None, then the edge lengths of `pop_tree` is
+    taken to be in haploid population units; i.e. where 1 unit equals 2N
+    generations for a diploid population of size N, or N generations for a
+    haploid population of size N. Otherwise the edge lengths of `pop_tree` is
+    taken to be in generations.
 
     If `gene_tree_list` is given, then the gene tree is added to the
     tree block, and the tree block's taxa block will be used to manage
@@ -641,6 +784,9 @@ def constrained_kingman(pop_tree,
     if `decorate_original_tree` is True, then the list of uncoalesced nodes at
     each node of the population tree is added to the original (input) population
     tree instead of a copy.
+
+    Note that this function does very much the same thing as `contained_coalescent()`,
+    but provides a very different API.
     """
 
     # get our random number generator
@@ -679,7 +825,7 @@ def constrained_kingman(pop_tree,
     else:
         # start with a new (deep) copy of the population tree so as to not
         # to change the original tree
-        working_poptree = copy.deepcopy(pop_tree)
+        working_poptree = dataobject.Tree(pop_tree)
 
     # start with a new tree
     gene_tree = dataobject.Tree()

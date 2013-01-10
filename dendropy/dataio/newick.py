@@ -46,24 +46,70 @@ def tree_source_iter(stream, **kwargs):
 
     The following optional keyword arguments are also recognized:
 
-        - `taxon_set`: TaxonSet object to use when reading data
-        - `as_rooted=True` (or `as_unrooted=False`): interprets trees as rooted
-        - `as_unrooted=True` (or `as_rooted=False`): interprets trees as unrooted
-        - `default_as_rooted=True` (or `default_as_unrooted=False`): interprets
-           all trees as rooted if rooting not given by `[&R]` or `[&U]` comments
-        - `default_as_unrooted=True` (or `default_as_rooted=False`): interprets
-           all trees as rooted if rooting not given by `[&R]` or `[&U]` comments
-        - `edge_len_type`: specifies the type of the edge lengths (int or float)
-        - `encode_splits`: specifies whether or not split bitmasks will be
-           calculated and attached to the edges.
-        - `extract_comment_metadata`: if True, any 'hot comments' (i.e.,
-            comments that begin with '&') or NHX comments associated with
-            items will be processed and stored as a dictionary attribute of the
-            object: "comment_metadata".
-        - `store_tree_weights`: if True, process the tree weight ("[&W 1/2]")
-           comment associated with each tree, if any.
-        - `finish_node_func`: is a function that will be applied to each node
-           after it has been constructed.
+        `taxon_set`
+            TaxonSet object to use when reading data.
+
+        `as_rooted=True` (or `as_unrooted=False`)
+            Unconditionally interprets all trees as rooted.
+
+        `as_unrooted=True` (or `as_rooted=False`)
+            Unconditionally interprets all trees as unrooted.
+
+        `default_as_rooted=True` (or `default_as_unrooted=False`)
+            Interprets all trees as rooted if rooting not given by `[&R]`
+            or `[&U]` comments.
+
+        `default_as_unrooted=True` (or `default_as_rooted=False`)
+            Interprets all trees as rooted if rooting not given by `[&R]`
+            or `[&U]` comments.
+
+        `edge_len_type`
+            Specifies the type of the edge lengths (int or float).
+
+        `extract_comment_metadata`
+            If True, any comments that begin with '&' or '&&' associated with
+            items will be processed and stored as part of the annotation set of
+            the object (`annotations`) If False, this will be skipped. Defaults
+            to False.
+
+        `store_tree_weights`
+            If True, process the tree weight ("[&W 1/2]") comment
+            associated with each tree, if any.
+
+        `encode_splits`
+            Specifies whether or not split bitmasks will be calculated and
+            attached to the edges.
+
+        `finish_node_func`
+            Is a function that will be applied to each node after it has
+            been constructed.
+
+        `case_sensitive_taxon_labels`
+            If True, then taxon labels are case sensitive (different cases
+            = different taxa); defaults to False.
+
+        `allow_duplicate_taxon_labels`
+            if True, allow duplicate labels on trees
+
+        `preserve_underscores`
+            If True, unquoted underscores in labels will *not* converted to
+            spaces. Defaults to False: all underscores not protected by
+            quotes will be converted to spaces.
+
+        `suppress_internal_node_taxa`
+            If False, internal node labels will be instantantiatd into Taxon
+            objects.  Defaults to True: internal node labels will *not* be
+            treated as taxa.
+
+        `allow_duplicate_taxon_labels`
+            If True, then multiple identical taxon labels will be allowed.
+            Defaults to False: treat multiple identical taxon labels as an
+            error.
+
+        `hyphens_as_tokens`
+            If True, hyphens will be treated as special punctuation
+            characters. Defaults to False, hyphens not treated as special
+            punctuation characters.
 
     """
     if "taxon_set" in kwargs:
@@ -81,7 +127,8 @@ def tree_source_iter(stream, **kwargs):
     newick_stream = nexustokenizer.NexusTokenizer(stream,
                                                   preserve_underscores=preserve_underscores,
                                                   hyphens_as_tokens=hyphens_as_tokens,
-                                                  extract_comment_metadata=extract_comment_metadata)
+                                                  extract_comment_metadata=extract_comment_metadata,
+                                                  case_sensitive_taxon_labels=kwargs.get('case_sensitive_taxon_labels', False))
     while not newick_stream.eof:
         t = nexustokenizer.tree_from_token_stream(newick_stream, taxon_set=taxon_set, **kwargs)
         if t is not None:
@@ -112,33 +159,71 @@ class NewickReader(iosys.DataReader):
         """
         __init__ recognizes the following keywords arguments:
 
-            - `dataset`: all data read from the source will be instantiated as
-               objects within this `DataSet` object
-            - `taxon_set`: TaxonSet object to use when reading data
-            - `as_rooted=True` (or `as_unrooted=False`): interprets trees as rooted
-            - `as_unrooted=True` (or `as_rooted=False`): interprets trees as unrooted
-            - `default_as_rooted=True` (or `default_as_unrooted=False`): interprets
-               all trees as rooted if rooting not given by `[&R]` or `[&U]` comments
-            - `default_as_unrooted=True` (or `default_as_rooted=False`): interprets
-               all trees as rooted if rooting not given by `[&R]` or `[&U]` comments
-            - `edge_len_type`: specifies the type of the edge lengths (int or float)
-            - `encode_splits`: specifies whether or not split bitmasks will be
-               calculated and attached to the edges.
-            - `finish_node_func`: is a function that will be applied to each node
-               after it has been constructed.
-            - `hyphens_as_tokens`: if True, hyphens will be treated as special
-               as special punctuation, as required by the NEXUS standard. If
-               False, hyphens will not be treated as special punctuation which
-               means that they are allowed in unquoted labels, but this
-               violates the NEXUS standard, and will break NEXUS parsing (and
-               many in-the-wild NEWICK as well). Default value is given by:
-               ``dendropy.dataio.nexustokenizer.DEFAULT_HYPHENS_AS_TOKENS``.
-            - `extract_comment_metadata`: if True, any 'hot comments' (i.e.,
-               comments that begin with '&') or NHX comments associated with
-               items will be processed and stored as a dictionary attribute of the
-               object: "comment_metadata".
-            - `store_tree_weights`: if True, process the tree weight ("[&W 1/2]")
-               comment associated with each tree, if any.
+            `taxon_set`
+                TaxonSet object to use when reading data.
+
+            `as_rooted=True` (or `as_unrooted=False`)
+                Unconditionally interprets all trees as rooted.
+
+            `as_unrooted=True` (or `as_rooted=False`)
+                Unconditionally interprets all trees as unrooted.
+
+            `default_as_rooted=True` (or `default_as_unrooted=False`)
+                Interprets all trees as rooted if rooting not given by `[&R]`
+                or `[&U]` comments.
+
+            `default_as_unrooted=True` (or `default_as_rooted=False`)
+                Interprets all trees as rooted if rooting not given by `[&R]`
+                or `[&U]` comments.
+
+            `edge_len_type`
+                Specifies the type of the edge lengths (int or float).
+
+            `extract_comment_metadata`
+                If True, any 'hot comments', i.e., comments that begin with
+                '&', or NHX comments associated with items will be processed
+                and stored as part of the annotation set of the object
+                (`annotations`) If False, this will be skipped. Defaults to
+                False.
+
+            `store_tree_weights`
+                If True, process the tree weight ("[&W 1/2]") comment
+                associated with each tree, if any.
+
+            `encode_splits`
+                Specifies whether or not split bitmasks will be calculated and
+                attached to the edges.
+
+            `finish_node_func`
+                Is a function that will be applied to each node after it has
+                been constructed.
+
+            `case_sensitive_taxon_labels`
+                If True, then taxon labels are case sensitive (different cases
+                = different taxa); defaults to False.
+
+            `allow_duplicate_taxon_labels`
+                if True, allow duplicate labels on trees
+
+            `preserve_underscores`
+                If True, unquoted underscores in labels will *not* converted to
+                spaces. Defaults to False: all underscores not protected by
+                quotes will be converted to spaces.
+
+            `suppress_internal_node_taxa`
+                If False, internal node labels will be instantantiatd into Taxon
+                objects.  Defaults to True: internal node labels will *not* be
+                treated as taxa.
+
+            `allow_duplicate_taxon_labels`
+                If True, then multiple identical taxon labels will be allowed.
+                Defaults to False: treat multiple identical taxon labels as an
+                error.
+
+            `hyphens_as_tokens`
+                If True, hyphens will be treated as special punctuation
+                characters. Defaults to False, hyphens not treated as special
+                punctuation characters.
         """
         iosys.DataReader.__init__(self, **kwargs)
         self.finish_node_func = kwargs.get("finish_node_func", None)
@@ -148,7 +233,9 @@ class NewickReader(iosys.DataReader):
         self.extract_comment_metadata = kwargs.get('extract_comment_metadata', False)
         self.store_tree_weights = kwargs.get('store_tree_weights', False)
         self.preserve_underscores = kwargs.get('preserve_underscores', False)
-        self.suppress_internal_node_taxa = kwargs.get("suppress_internal_node_taxa", False)
+        self.suppress_internal_node_taxa = kwargs.get("suppress_internal_node_taxa", True)
+        self.case_sensitive_taxon_labels = kwargs.get('case_sensitive_taxon_labels', False)
+        self.edge_len_type = kwargs.get('edge_len_type', float)
 
     def read(self, stream):
         """
@@ -170,7 +257,9 @@ class NewickReader(iosys.DataReader):
                 store_tree_weights=self.store_tree_weights,
                 encode_splits=self.encode_splits,
                 preserve_underscores=self.preserve_underscores,
-                suppress_internal_node_taxa=self.suppress_internal_node_taxa):
+                suppress_internal_node_taxa=self.suppress_internal_node_taxa,
+                edge_len_type=self.edge_len_type,
+                case_sensitive_taxon_labels=self.case_sensitive_taxon_labels):
             tree_list.append(t, reindex_taxa=False)
         return self.dataset
 
@@ -182,30 +271,136 @@ class NewickWriter(iosys.DataWriter):
 
     def __init__(self, **kwargs):
         """
-        __init__ recognizes the following keywords (in addition to those of `DataWriter.__init__`):
+        __init__ recognizes the following keywords (in addition to those of
+        `DataWriter.__init__`):
 
-            - `dataset`: data to be written
-            - `edge_lengths` : if False, edges will not write edge lengths [True]
-            - `internal_labels` : if False, internal labels will not be written [True]
-            - `preserve_spaces` : spaces not mapped to underscores in labels [False]
-            - `quote_underscores` : labels with underscores are quoted, for "hard" underscores [True]
-            - `store_tree_weights` : tree weights are stored
-            - `nhx_key_to_func_dict` : a dict of NHX "key" to a function that takes an edge and returns the string that is the value of the NHX key (or None to omit that key for that edge)
-            - `annotations_as_comments` : if True, will write annotations as comments
-            - `annotations_as_nhx` : if True, will write annotation as NHX statements
-            - `write_item_comments` : if True, will write any additional comments
+            `dataset`
+                Data to be written.
+            `suppress_leaf_taxon_labels`
+                If True, then taxon labels will not be printed for leaves.
+                Default is False.
+            `suppress_leaf_node_labels`
+                If False, then node labels (if available) will be printed
+                for leaves. Defaults to True. Note that DendroPy distinguishes
+                between *taxon* labels and *node* labels. In a typical NEWICK
+                string, taxon labels are printed for leaf nodes, while leaf
+                node labels are ignored (hence the default 'True' setting to
+                suppress leaf node labels).
+            `suppress_internal_taxon_labels`
+                If True, then taxon labels will not be printed for internal
+                nodes.  Default is False.
+                NOTE: this replaces the `internal_labels` argument which has
+                been deprecated.
+            `suppress_internal_node_labels`
+                If True, internal node labels will not be written. Default is
+                False.
+                NOTE: this replaces the `internal_labels` argument which has
+                been deprecated.
+            `suppress_rooting`
+                If True, will not write rooting statement. Default is False.
+                NOTE: this replaces the `write_rooting` argument which has been
+                deprecated.
+            `suppress_edge_lengths`
+                If True, will not write edge lengths. Default is False.
+                NOTE: this replaces the `edge_lengths` argument which has been
+                deprecated.
+            `unquoted_underscores`
+                If True, labels with underscores will not be quoted, which will
+                mean that they will be interpreted as spaces if read again
+                ("soft" underscores).  If False, then labels with underscores
+                will be quoted, resulting in "hard" underscores.  Default is
+                False.
+                NOTE: this replaces the `quote_underscores` argument which has
+                been deprecated.
+            `preserve_spaces`
+                If True, spaces not mapped to underscores in labels (which
+                means any labels containing spaces will have to be
+                quoted). Default is False.
+                False.
+            `store_tree_weights`
+                If True, tree weights are written. Default is False.
+            `supppress_annotations`
+                If False, will write annotations as comments. Default is True.
+            `annotations_as_nhx`
+                If True, and if `suppress_annotations` is False, will write
+                annotation as NHX statements. Default is False.
+            `suppress_item_comments`
+                If False, will write any additional comments. Default is True.
+            `node_label_element_separator`
+                If both `suppress_leaf_taxon_labels` and
+                `suppress_leaf_node_labels` are False, then this will be the
+                string used to join them. Defaults to ' '.
+            `node_label_compose_func`
+                If not None, should be a function that takes a Node object as
+                an argument and returns the string to be used to represent the
+                node in the tree statement. The return value
+                from this function is used unconditionally to print a node
+                representation in a tree statement, by-passing the default
+                labelling function (and thus ignoring
+                `suppress_leaf_taxon_labels`, `suppress_leaf_node_labels=True`,
+                `suppress_internal_taxon_labels`, `suppress_internal_node_labels`,
+                etc.). Defaults to None.
+            `edge_label_compose_func`
+                If not None, should be a function that takes an Edge object as
+                an argument, and returns the string to be used to represent the
+                edge length in the tree statement.
+
+        Typically, these keywords would be passed to the `write_to_path()`,
+        `write_to_stream` or `as_string` arguments, when 'newick' is used as
+        the schema::
+
+            d.write_to_path('data.tre', 'newick',
+                    suppress_leaf_taxon_labels=False,
+                    suppress_leaf_node_labels=True,
+                    suppress_internal_taxon_labels=False,
+                    suppress_internal_node_labels=False,
+                    suppress_rooting=False,
+                    suppress_edge_lengths=False,
+                    unquoted_underscores=False,
+                    preserve_spaces=False,
+                    store_tree_weights=False,
+                    suppress_annotations=True,
+                    annotations_as_nhx=False,
+                    suppress_item_comments=True,
+                    node_label_element_separator=' ',
+                    node_label_compose_func=None,
+                    edge_label_compose_func=None)
+
         """
         iosys.DataWriter.__init__(self, **kwargs)
-        self.edge_lengths = kwargs.get("edge_lengths", True)
-        self.is_write_rooting = kwargs.get("write_rooting", True)
-        self.internal_labels = kwargs.get("internal_labels", True)
+
+        self.suppress_leaf_taxon_labels = kwargs.get("suppress_leaf_taxon_labels", False)
+        self.suppress_leaf_node_labels = kwargs.get("suppress_leaf_node_labels", True)
+        self.suppress_internal_taxon_labels = kwargs.get("suppress_internal_taxon_labels", False)
+        self.suppress_internal_taxon_labels = not kwargs.get("internal_labels", not self.suppress_internal_taxon_labels) # legacy
+        self.suppress_internal_node_labels = kwargs.get("suppress_internal_node_labels", False)
+        self.suppress_internal_node_labels = not kwargs.get("internal_labels", not self.suppress_internal_node_labels) # legacy
+
+        self.suppress_rooting = kwargs.get("suppress_rooting", False)
+        self.suppress_rooting = not kwargs.get("write_rooting", not self.suppress_rooting) # legacy
+
+        self.suppress_edge_lengths = kwargs.get("suppress_edge_lengths", False)
+        self.suppress_edge_lengths = not kwargs.get("edge_lengths", not self.suppress_edge_lengths) # legacy
+
+        self.unquoted_underscores = kwargs.get('unquoted_underscores', False)
+        self.unquoted_underscores = not kwargs.get('quote_underscores', not self.unquoted_underscores) # legacy
+
         self.preserve_spaces = kwargs.get("preserve_spaces", False)
-        self.quote_underscores = kwargs.get('quote_underscores', True)
         self.store_tree_weights = kwargs.get("store_tree_weights", False)
-        self.nhx_key_to_func = kwargs.get("nhx_key_to_func_dict")
-        self.annotations_as_comments = kwargs.get("annotations_as_comments", False)
+
+        self.suppress_annotations = kwargs.get("suppress_annotations", True)
+        self.suppress_annotations = not kwargs.get("annotations_as_comments", not self.suppress_annotations) # legacy
+
         self.annotations_as_nhx = kwargs.get("annotations_as_nhx", False)
-        self.write_item_comments = kwargs.get("write_item_comments", False)
+
+        self.suppress_item_comments = kwargs.get("suppress_item_comments", True)
+        self.suppress_item_comments = not kwargs.get("write_item_comments", not self.suppress_item_comments)
+
+        self.node_label_element_separator = kwargs.get("node_label_element_separator", ' ')
+        self.node_label_compose_func = kwargs.get("node_label_compose_func", None)
+        self.edge_label_compose_func = kwargs.get("edge_label_compose_func", None)
+        if self.edge_label_compose_func is None:
+            self.edge_label_compose_func = self._format_edge_length
 
     def write(self, stream):
         """
@@ -233,7 +428,7 @@ class NewickWriter(iosys.DataWriter):
             self.write_tree(tree, stream)
 
     def compose_comment_string(self, item):
-        if self.write_item_comments and item.comments:
+        if not self.suppress_item_comments and item.comments:
             item_comments = []
             if isinstance(item.comments, str):
                 item.comments = [item.comments]
@@ -248,7 +443,7 @@ class NewickWriter(iosys.DataWriter):
         """
         Composes and writes `tree` to `stream`.
         """
-        if tree.rooting_state_is_undefined or not self.is_write_rooting:
+        if tree.rooting_state_is_undefined or self.suppress_rooting:
             rooting = ""
         elif tree.is_rooted:
             rooting = "[&R] "
@@ -260,7 +455,7 @@ class NewickWriter(iosys.DataWriter):
             weight = "[&W %s] " % tree.weight
         else:
             weight = ""
-        if self.annotations_as_comments or self.annotations_as_nhx:
+        if not self.suppress_annotations or self.annotations_as_nhx:
             annotation_comments = nexustokenizer.format_annotation_as_comments(tree, nhx=self.annotations_as_nhx)
         else:
             annotation_comments = ""
@@ -282,18 +477,52 @@ class NewickWriter(iosys.DataWriter):
         Based on current settings, the attributes of a node, and
         whether or not the node is a leaf, returns an appropriate tag.
         """
-        if hasattr(node, 'taxon') and node.taxon:
-            tag = node.taxon.label
-        elif hasattr(node, 'label') and node.label:
-            tag = node.label
-        elif len(node.child_nodes()) == 0:
-            # force label if a leaf node
-            tag = node.oid
+        tag = None
+        if self.node_label_compose_func:
+            tag = self.node_label_compose_func(node)
         else:
-            tag = ""
+            tag_parts = []
+            is_leaf = len(node.child_nodes()) == 0
+            if is_leaf:
+                if hasattr(node, 'taxon') \
+                        and node.taxon \
+                        and node.taxon.label is not None \
+                        and not self.suppress_leaf_taxon_labels:
+                    tag_parts.append(str(node.taxon.label))
+                if hasattr(node, 'label') \
+                        and node.label \
+                        and node.label is not None \
+                        and not self.suppress_leaf_node_labels:
+                    tag_parts.append(str(node.label))
+                if len(tag_parts) > 0:
+                    tag = self.node_label_element_separator.join(tag_parts)
+                else:
+                    return "_" # anonymous leaf
+            else:
+                if hasattr(node, 'taxon') \
+                        and node.taxon \
+                        and node.taxon.label is not None \
+                        and not self.suppress_internal_taxon_labels:
+                    tag_parts.append(str(node.taxon.label))
+                if hasattr(node, 'label') \
+                        and node.label \
+                        and node.label is not None \
+                        and not self.suppress_internal_node_labels:
+                    tag_parts.append(str(node.label))
+                if len(tag_parts) > 0:
+                    tag = self.node_label_element_separator.join(tag_parts)
+                else:
+                    return "" # nada
         if tag:
-            tag = textutils.escape_nexus_token(tag, preserve_spaces=self.preserve_spaces, quote_underscores=self.quote_underscores)
-        return tag
+            tag = textutils.escape_nexus_token(tag,
+                    preserve_spaces=self.preserve_spaces,
+                    quote_underscores=not self.unquoted_underscores)
+            return tag
+        else:
+            return ""
+
+    def _format_edge_length(self, edge):
+        return "%s" % edge.length
 
     def compose_node(self, node):
         """
@@ -304,26 +533,26 @@ class NewickWriter(iosys.DataWriter):
         if child_nodes:
             subnodes = [self.compose_node(child) for child in child_nodes]
             statement = '(' + ','.join(subnodes) + ')'
-            if self.internal_labels:
+            if not (self.suppress_internal_taxon_labels and self.suppress_internal_node_labels):
                 statement = statement + self.choose_display_tag(node)
-            if node.edge and node.edge.length != None and self.edge_lengths:
-                statement =  "%s:%s" % (statement, node.edge.length)
+            if node.edge and node.edge.length != None and not self.suppress_edge_lengths:
+                statement =  "%s:%s" % (statement, self.edge_label_compose_func(node.edge))
         else:
             statement = self.choose_display_tag(node)
-            if node.edge and node.edge.length != None and self.edge_lengths:
-                statement =  "%s:%s" % (statement, node.edge.length)
-        if self.annotations_as_comments or self.annotations_as_nhx:
+            if node.edge and node.edge.length != None and not self.suppress_edge_lengths:
+                statement =  "%s:%s" % (statement, self.edge_label_compose_func(node.edge))
+        if not self.suppress_annotations or self.annotations_as_nhx:
             node_annotation_comments = nexustokenizer.format_annotation_as_comments(node, nhx=self.annotations_as_nhx)
             edge_annotation_comments = nexustokenizer.format_annotation_as_comments(node.edge, nhx=self.annotations_as_nhx)
             statement = statement + node_annotation_comments + edge_annotation_comments
-        if self.nhx_key_to_func:
-            nhx_to_print = []
-            for k, v in self.nhx_key_to_func.items():
-                r = v(node.edge)
-                if r is not None:
-                    nhx_to_print.append("%s=%s" % (k, str(r)))
-            if nhx_to_print:
-                statement = statement + ('[&&NHX:%s]' % ':'.join(nhx_to_print))
+        #if self.nhx_key_to_func:
+        #    nhx_to_print = []
+        #    for k, v in self.nhx_key_to_func.items():
+        #        r = v(node.edge)
+        #        if r is not None:
+        #            nhx_to_print.append("%s=%s" % (k, str(r)))
+        #    if nhx_to_print:
+        #        statement = statement + ('[&&NHX:%s]' % ':'.join(nhx_to_print))
         node_comment_str = self.compose_comment_string(node)
         statement += node_comment_str
         return statement

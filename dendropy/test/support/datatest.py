@@ -25,7 +25,7 @@ import dendropy
 from dendropy.test.support import pathmap
 from dendropy.test.support import extendedtest
 
-class DataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
+class AnnotatedDataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
     """
     Extends ExtendedTestCase with tests for data object comparisons.
     """
@@ -47,6 +47,11 @@ class DataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
             writer_kwargs = {}
         if reader_kwargs is None:
             reader_kwargs = {}
+
+        # no real support character types in non-NeXML formats ... yet
+        if "ignore_chartypes" not in kwargs and schema != "nexml":
+            kwargs["ignore_chartypes"] = True
+
         rt_dataset, output_path = self.roundTripData(dataset, schema, writer_kwargs=writer_kwargs, reader_kwargs=reader_kwargs)
         self.logger.info("Comparing original and round-tripped DataSet objects")
         self.assertDistinctButEqual(dataset, rt_dataset, **kwargs)
@@ -110,6 +115,8 @@ class DataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
             tree_list2 = dataset2.tree_lists[tsi]
             self.assertDistinctButEqualTreeList(tree_list1, tree_list2, **kwargs)
 
+        self.assertDistinctButEqualAnnotations(dataset1, dataset2, **kwargs)
+
     def assertDistinctButEqualTaxon(self, taxon1, taxon2, **kwargs):
         equal_oids = kwargs.get("equal_oids", None)
         ignore_underscore_substitution = kwargs.get("ignore_underscore_substitution", False)
@@ -125,6 +132,7 @@ class DataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
             self.assertEqual(taxon1.oid, taxon2.oid)
         elif equal_oids is False:
             self.assertNotEqual(taxon1.oid, taxon2.oid)
+        self.assertDistinctButEqualAnnotations(taxon1, taxon2, **kwargs)
 
     def assertDistinctButEqualTaxonSet(self, taxon_set1, taxon_set2, **kwargs):
         equal_oids = kwargs.get("equal_oids", None)
@@ -156,8 +164,11 @@ class DataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
                         self.assertEqual(oids1, oids2)
                     else:
                         self.assertNotEqual(oids1, oids2)
+            self.assertDistinctButEqualAnnotations(taxon_set1, taxon_set2, **kwargs)
         else:
-            self.assertEqual(taxon_set1, taxon_set2)
+            for ti, t1 in enumerate(taxon_set1):
+                t2 = taxon_set2[ti]
+                self.assertIs(t1, t2)
 
     def assertDistinctButEqualTreeList(self, tree_list1, tree_list2, **kwargs):
         """
@@ -170,10 +181,6 @@ class DataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
         self.assertEqual(len(tree_list1), len(tree_list2))
         if distinct_taxa:
             self.assertIsNot(tree_list1.taxon_set, tree_list2.taxon_set)
-            self.assertDistinctButEqualTaxonSet(tree_list1.taxon_set, tree_list2.taxon_set, **kwargs)
-        else:
-            self.assertIs(tree_list1.taxon_set, tree_list2.taxon_set)
-        if distinct_taxa:
             self.assertDistinctButEqualTaxonSet(tree_list1.taxon_set, tree_list2.taxon_set, **kwargs)
         else:
             self.assertIs(tree_list1.taxon_set, tree_list2.taxon_set)
@@ -192,6 +199,7 @@ class DataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
                 self.assertDistinctButEqualTree(tree1, tree2, **kwargs)
             else:
                 self.assertIs(tree1, tree2)
+        self.assertDistinctButEqualAnnotations(tree_list1, tree_list2, **kwargs)
 
     def assertDistinctButEqualTree(self, tree1, tree2, **kwargs):
         """
@@ -264,6 +272,21 @@ class DataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
                 self.assertEqual(edge1.oid, edge2.oid)
             elif equal_oids is False:
                 self.assertNotEqual(edge1.oid, edge2.oid)
+        if not kwargs.get("ignore_splits", False):
+            if hasattr(tree1, "split_edges"):
+                self.assertTrue(tree1.split_edges is not tree2.split_edges)
+                self.assertEqual(len(tree1.split_edges), len(tree2.split_edges))
+                self.assertTrue(hasattr(tree2, "split_edges"))
+                for edge_idx, edge1 in enumerate(tree1_edges):
+                    edge2 = tree2_edges[edge_idx]
+                    self.assertTrue(edge1 is not edge2)
+                    self.assertEqual(edge1.split_bitmask, edge2.split_bitmask)
+                    self.assertIs(tree1.split_edges[edge1.split_bitmask], edge1)
+                    self.assertIs(tree2.split_edges[edge2.split_bitmask], edge2)
+            else:
+                self.assertFalse(hasattr(tree2, "split_edges"))
+
+        self.assertDistinctButEqualAnnotations(tree1, tree2, **kwargs)
 
     def assertDistinctButEqualStateAlphabetElement(self, sae1, sae2, **kwargs):
         equal_oids = kwargs.get("equal_oids", None)
@@ -283,6 +306,7 @@ class DataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
                 self.assertDistinctButEqualStateAlphabetElement(ms1, ms2, **kwargs)
         else:
             self.assertIs(sae2.member_states, None)
+        self.assertDistinctButEqualAnnotations(sae1, sae2, **kwargs)
 
     def assertDistinctButEqualStateAlphabet(self, state_alphabet1, state_alphabet2, **kwargs):
         equal_oids = kwargs.get("equal_oids", None)
@@ -300,11 +324,13 @@ class DataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
         for state_idx, state1 in enumerate(state_alphabet1):
             state2 = state_alphabet2[state_idx]
             self.assertDistinctButEqualStateAlphabetElement(state1, state2)
+            self.assertDistinctButEqualAnnotations(state1, state2, **kwargs)
+        self.assertDistinctButEqualAnnotations(state_alphabet1, state_alphabet2, **kwargs)
 
     def assertDistinctButEqualContinuousCharMatrix(self, char_matrix1, char_matrix2, **kwargs):
         distinct_taxa = kwargs.get("distinct_taxa", True)
         equal_oids = kwargs.get("equal_oids", None)
-        ignore_chartypes = kwargs.get("ignore_chartypes", True)
+        ignore_chartypes = kwargs.get("ignore_chartypes", False)
         self.logger.info("Comparing ContinuousCharacterMatrix objects %d and %d" % (id(char_matrix1), id(char_matrix2)))
         self.assertIsNot(char_matrix1, char_matrix2)
         if distinct_taxa:
@@ -339,6 +365,19 @@ class DataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
             for i, c1 in enumerate(vec1):
                 c2 = vec2[i]
                 self.assertAlmostEqual(c1.value, c2.value, 6)
+                self.assertDistinctButEqualAnnotations(c1, c2, **kwargs)
+            self.assertDistinctButEqualAnnotations(vec1, vec2, **kwargs)
+        if not ignore_chartypes:
+            self.assertEqual(len(char_matrix1.character_types), len(char_matrix2.character_types))
+            distinct_state_alphabets = kwargs.get("distinct_state_alphabets", None)
+            for coli, col1 in enumerate(char_matrix1.character_types):
+                col2 = char_matrix2.character_types[coli]
+                if distinct_state_alphabets is True:
+                    self.assertDistinctButEqualStateAlphabet(col1.state_alphabet, col2.state_alphabet)
+                elif distinct_state_alphabets is False:
+                    self.assertIs(col1.state_alphabet, col2.state_alphabet)
+                self.assertDistinctButEqualAnnotations(col1, col2, **kwargs)
+        self.assertDistinctButEqualAnnotations(char_matrix1, char_matrix2, **kwargs)
 
     def assertDistinctButEqualDiscreteCharMatrix(self, char_matrix1, char_matrix2, **kwargs):
         """
@@ -349,7 +388,7 @@ class DataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
         distinct_state_alphabets = kwargs.get("distinct_state_alphabets", None)
         distinct_taxa = kwargs.get("distinct_taxa", True)
         equal_oids = kwargs.get("equal_oids", None)
-        ignore_chartypes = kwargs.get("ignore_chartypes", True)
+        ignore_chartypes = kwargs.get("ignore_chartypes", False)
         self.logger.info("Comparing DiscreteCharacterMatrix objects %d and %d" % (id(char_matrix1), id(char_matrix2)))
         self.assertIsNot(char_matrix1, char_matrix2)
         if distinct_taxa:
@@ -368,26 +407,32 @@ class DataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
             for sai, sa1 in enumerate(char_matrix1.state_alphabets):
                 sa2 = char_matrix2.state_alphabets[sai]
                 self.assertDistinctButEqualStateAlphabet(sa1, sa2)
+                self.assertDistinctButEqualAnnotations(sa1, sa2, **kwargs)
         elif distinct_state_alphabets is False:
             for sai, sa1 in enumerate(char_matrix1.state_alphabets):
                 sa2 = char_matrix2.state_alphabets[sai]
                 self.assertIs(sa1, sa2)
                 self.assertIs(char_matrix1.default_state_alphabet, char_matrix2.default_state_alphabet)
         if not ignore_chartypes:
-            self.assertEqual(len(char_matrix1.character_types), len(char_matrix2.character_types))
-        for coli, col1 in enumerate(char_matrix1.character_types):
-            if distinct_state_alphabets is True:
+            self.assertEqual(len(char_matrix1.character_types), len(char_matrix2.character_types),
+                    "Unequal character type lists:\n\n%s: %s\n\n%s: %s\n" % (
+                        repr(char_matrix1), char_matrix1.character_types,
+                        repr(char_matrix1), char_matrix2.character_types))
+            for coli, col1 in enumerate(char_matrix1.character_types):
                 col2 = char_matrix2.character_types[coli]
-                self.assertDistinctButEqualStateAlphabet(col1.state_alphabet, col2.state_alphabet)
-            elif distinct_state_alphabets is False:
-                self.assertIs(col1.state_alphabet, col2.state_alphabet)
+                if distinct_state_alphabets is True:
+                    self.assertDistinctButEqualStateAlphabet(col1.state_alphabet, col2.state_alphabet)
+                elif distinct_state_alphabets is False:
+                    self.assertIs(col1.state_alphabet, col2.state_alphabet)
+                self.assertDistinctButEqualAnnotations(col1, col2, **kwargs)
         self.assertEqual(len(char_matrix1), len(char_matrix2))
 
         for ti, taxon1 in enumerate(char_matrix1):
-            vec1 = char_matrix1[taxon1]
             taxon2 = char_matrix2.taxon_set[ti]
+            vec1 = char_matrix1[taxon1]
             vec2 = char_matrix2[taxon2]
             self.logger.info("Comparing CharacterDataVector objects %d and %d" % (id(vec2), id(vec2)))
+            self.assertDistinctButEqualAnnotations(vec1, vec2, **kwargs)
             if distinct_taxa:
                 self.assertDistinctButEqualTaxon(taxon1, taxon2, **kwargs)
             else:
@@ -408,6 +453,7 @@ class DataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
                     self.assertDistinctButEqualStateAlphabetElement(c1.value, c2.value)
                 elif distinct_state_alphabets is False:
                     self.assertIs(c1.value, c2.value)
+                self.assertDistinctButEqualAnnotations(c1, c2, **kwargs)
                 if not ignore_chartypes:
                     if c1.character_type is not None:
                         self.assertIsNot(c1.character_type, c2.character_type)
@@ -419,8 +465,10 @@ class DataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
                         self.assertIn(c2.character_type.state_alphabet, char_matrix2.state_alphabets)
                         self.assertIn(c1.value, c1.character_type.state_alphabet)
                         self.assertIn(c2.value, c2.character_type.state_alphabet)
+                        self.assertDistinctButEqualAnnotations(c1, c2, **kwargs)
                     else:
                         self.assertIs(c2.character_type, None)
+        self.assertDistinctButEqualAnnotations(char_matrix1, char_matrix2, **kwargs)
 
     def assertDistinctButEqualCharMatrix(self, char_matrix1, char_matrix2, **kwargs):
         if isinstance(char_matrix1, dendropy.DiscreteCharacterMatrix):
@@ -429,6 +477,42 @@ class DataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
             self.assertDistinctButEqualContinuousCharMatrix(char_matrix1, char_matrix2, **kwargs)
         else:
             raise NotImplementedError()
+
+    def verifyAnnotationsTarget(self, annotated):
+        self.assertIs(annotated.annotations.target, annotated,
+                "invalid target for %s (%s): %s (target) is not %s (annotated)" % (
+                        repr(annotated.annotations),
+                        hex(id(annotated.annotations)),
+                        repr(annotated.annotations.target),
+                        repr(annotated)))
+        for a in annotated.annotations:
+            if a.is_attribute:
+                self.assertIs(a._value[0], annotated)
+            self.verifyAnnotationsTarget(a)
+
+    def assertDistinctButEqualAnnotations(self, annotated1, annotated2, **kwargs):
+        if kwargs.get("ignore_annotations", False):
+            return
+        self.verifyAnnotationsTarget(annotated1)
+        self.verifyAnnotationsTarget(annotated2)
+        self.assertEqual(len(annotated1.annotations), len(annotated2.annotations))
+        self.assertTrue(annotated1.annotations is not annotated2.annotations)
+        equal_oids = kwargs.get("equal_oids", None)
+        for idx, a1 in enumerate(annotated1.annotations):
+            a2 = annotated2.annotations[idx]
+            self.assertEqual(a1.name, a2.name)
+            self.assertEqual(a1.value, a2.value)
+            self.assertEqual(a1.datatype_hint, a2.datatype_hint)
+            self.assertEqual(a1.name_prefix, a2.name_prefix)
+            self.assertEqual(a1.namespace, a2.namespace)
+            self.assertEqual(a1.is_attribute, a2.is_attribute)
+            self.assertEqual(a1.annotate_as_reference, a2.annotate_as_reference)
+            self.assertEqual(a1.is_hidden, a2.is_hidden)
+            self.assertEqual(a1.label, a2.label)
+            if equal_oids:
+                self.assertEqual(a1.oid, a2.oid)
+            else:
+                self.assertNotEqual(a1.oid, a2.oid)
 
     def text_to_label_symbol_tuples(self, text):
         """
@@ -551,7 +635,7 @@ class DataObjectVerificationTestCase(extendedtest.ExtendedTestCase):
                 v2 = seq_values2[j]
                 self.assertAlmostEqual(v1, v2, 4)
 
-class ComplexMultiTaxonSetDataVerificationTest(DataObjectVerificationTestCase):
+class ComplexMultiTaxonSetDataVerificationTest(AnnotatedDataObjectVerificationTestCase):
 
     def setUp(self):
         self.taxon_set_names = [
@@ -569,7 +653,7 @@ class ComplexMultiTaxonSetDataVerificationTest(DataObjectVerificationTestCase):
              'Antaresia childreni', 'Antaresia perthensis', 'Antaresia melanocephalus',
              'Antaresia ramsayi', 'Python reticulatus', 'Python timoriensis',
              'Python sebae', 'Python molurus', 'Python curtus', 'Python regius',
-             'Candola aspera', 'Morelia nauta', 'Morelia clastolepis',
+             'Candoia aspera', 'Morelia nauta', 'Morelia clastolepis',
              'Morelia tracyae', 'Morelia kinghorni',],
             ["Lystrophis dorbignyi", "Waglerophis merremi", "Lystrophis histricus",
               "Xenoxybelis argenteus", "Liophis jaegeri", "Liophis elegantissimus",
@@ -663,7 +747,7 @@ class ComplexMultiTaxonSetDataVerificationTest(DataObjectVerificationTestCase):
                     26 Python_molurus,
                     27 Python_curtus,
                     28 Python_regius,
-                    29 Candola_aspera,
+                    29 Candoia_aspera,
                     30 Morelia_nauta,
                     31 Morelia_clastolepis,
                     32 Morelia_tracyae,
@@ -982,14 +1066,14 @@ class ComplexMultiTaxonSetDataVerificationTest(DataObjectVerificationTestCase):
                 TITLE Pythonidae;
                 DIMENSIONS NTAX=33;
                 TAXLABELS
-                    Xenopeltis_unicolor Loxocemus_bicolor Morelia_spilota Morelia_bredli Morelia_carinata Morelia_amethistina Morelia_oenpelliensis Morelia_boeleni Morelia_viridisS Morelia_viridisN Liasis_olivaceus Liasis_mackloti Liasis_fuscus Liasis_albertisii Apodora_papuana Bothrochilus_boa Antaresia_maculosa Antaresia_stimsoni Antaresia_childreni Antaresia_perthensis Antaresia_melanocephalus Antaresia_ramsayi Python_reticulatus Python_timoriensis Python_sebae Python_molurus Python_curtus Python_regius Candola_aspera Morelia_nauta Morelia_clastolepis Morelia_tracyae Morelia_kinghorni
+                    Xenopeltis_unicolor Loxocemus_bicolor Morelia_spilota Morelia_bredli Morelia_carinata Morelia_amethistina Morelia_oenpelliensis Morelia_boeleni Morelia_viridisS Morelia_viridisN Liasis_olivaceus Liasis_mackloti Liasis_fuscus Liasis_albertisii Apodora_papuana Bothrochilus_boa Antaresia_maculosa Antaresia_stimsoni Antaresia_childreni Antaresia_perthensis Antaresia_melanocephalus Antaresia_ramsayi Python_reticulatus Python_timoriensis Python_sebae Python_molurus Python_curtus Python_regius Candoia_aspera Morelia_nauta Morelia_clastolepis Morelia_tracyae Morelia_kinghorni
                 ;
 
             END;
             BEGIN TREES;
                 Title Pythonidae_MLE;
                 LINK Taxa = Pythonidae;
-                TREE 0 = [&U] (((Python_regius:0.1058922755,((Python_sebae:0.0629755585,Python_molurus:0.0335903967):0.02165,Python_curtus:0.1067094932):0.016163):0.032743,(((((Morelia_bredli:0.0274921037,Morelia_spilota:0.0241663426):0.026356,((Morelia_tracyae:0.0377936102,((Morelia_clastolepis:0.0045446653,(Morelia_kinghorni:0.0075825724,Morelia_nauta:0.0086155842):0.004182):0.018597,Morelia_amethistina:0.0227641045):0.007181):0.024796,Morelia_oenpelliensis:0.0579745143):0.004283):0.031732,((Antaresia_maculosa:0.0679212061,(Antaresia_perthensis:0.0760812159,(Antaresia_stimsoni:0.0152390165,Antaresia_childreni:0.023141749):0.032397):0.012848):0.011617,(Morelia_carinata:0.0660356718,(Morelia_viridisN:0.0377499268,Morelia_viridisS:0.0473589755):0.027329):0.013482):0.015469):0.006602,(((((Apodora_papuana:0.0670782319,Liasis_olivaceus:0.0430801028):0.010168,(Liasis_fuscus:0.0194903208,Liasis_mackloti:0.0141916418):0.048505):0.013422,(Antaresia_melanocephalus:0.0380695554,Antaresia_ramsayi:0.0325474267):0.043626):0.007734,(Liasis_albertisii:0.0542142498,Bothrochilus_boa:0.0638595214):0.038444):0.002713,Morelia_boeleni:0.0843874314):0.002859):0.027099,(Python_timoriensis:0.074479767,Python_reticulatus:0.0562613055):0.06004):0.030952):0.060789,(Xenopeltis_unicolor:0.1983677797,Candola_aspera:0.4092923305):0.048508,Loxocemus_bicolor:0.2627888765);
+                TREE 0 = [&U] (((Python_regius:0.1058922755,((Python_sebae:0.0629755585,Python_molurus:0.0335903967):0.02165,Python_curtus:0.1067094932):0.016163):0.032743,(((((Morelia_bredli:0.0274921037,Morelia_spilota:0.0241663426):0.026356,((Morelia_tracyae:0.0377936102,((Morelia_clastolepis:0.0045446653,(Morelia_kinghorni:0.0075825724,Morelia_nauta:0.0086155842):0.004182):0.018597,Morelia_amethistina:0.0227641045):0.007181):0.024796,Morelia_oenpelliensis:0.0579745143):0.004283):0.031732,((Antaresia_maculosa:0.0679212061,(Antaresia_perthensis:0.0760812159,(Antaresia_stimsoni:0.0152390165,Antaresia_childreni:0.023141749):0.032397):0.012848):0.011617,(Morelia_carinata:0.0660356718,(Morelia_viridisN:0.0377499268,Morelia_viridisS:0.0473589755):0.027329):0.013482):0.015469):0.006602,(((((Apodora_papuana:0.0670782319,Liasis_olivaceus:0.0430801028):0.010168,(Liasis_fuscus:0.0194903208,Liasis_mackloti:0.0141916418):0.048505):0.013422,(Antaresia_melanocephalus:0.0380695554,Antaresia_ramsayi:0.0325474267):0.043626):0.007734,(Liasis_albertisii:0.0542142498,Bothrochilus_boa:0.0638595214):0.038444):0.002713,Morelia_boeleni:0.0843874314):0.002859):0.027099,(Python_timoriensis:0.074479767,Python_reticulatus:0.0562613055):0.06004):0.030952):0.060789,(Xenopeltis_unicolor:0.1983677797,Candoia_aspera:0.4092923305):0.048508,Loxocemus_bicolor:0.2627888765);
             END;
         """
         ]

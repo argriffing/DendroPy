@@ -154,14 +154,14 @@ class CommentReadingTests(unittest.TestCase):
     def testIncompleteMetadata(self):
         s = """[&color=blue](A[&region=Asia,id=00012][cryptic],(B[&region=Africa],C[&region=Madagascar,id=19391][two of three]))"""
         tree = dendropy.Tree.get_from_string(s, 'newick', extract_comment_metadata=True)
-        self.assertEqual(tree.comment_metadata, {'color': 'blue'})
+        self.assertEqual(tree.annotations.values_as_dict(), {'color': 'blue'})
         expected = [ {'region': 'Asia', 'id': '00012'},
                 {'region': 'Africa'},
                 {'region': 'Madagascar', 'id': '19391'},
                 {},
                 {},]
         for idx, nd in enumerate(tree.postorder_node_iter()):
-            self.assertEqual(nd.comment_metadata, expected[idx])
+            self.assertEqual(nd.annotations.values_as_dict(), expected[idx])
 
 class CommentMetaDataTests(unittest.TestCase):
 
@@ -200,9 +200,10 @@ END;
 
     def check_results(self, tree):
         tree.assign_node_labels_from_taxon_or_oid()
-        self.assertEqual(tree.comment_metadata, {'Tree1': '1', 'Tree2': '2', 'Tree3':['1','2','3']})
+        metadata = tree.annotations.values_as_dict()
+        self.assertEqual(metadata, {'Tree1': '1', 'Tree2': '2', 'Tree3':['1','2','3']})
         for nd in tree.postorder_node_iter():
-            metadata = nd.comment_metadata
+            metadata = nd.annotations.values_as_dict()
             #print("%s: %s => %s" % (nd.label, nd.comments, metadata))
             self.assertEqual(len(metadata), 3)
             values = ["1", "2", ["1","2","3"]]
@@ -214,7 +215,7 @@ END;
     def testFigtreeStyleBasic(self):
         s = self.figtree_metadata_str
         _LOG.info("Tree = %s" % s)
-        tree = dendropy.Tree.get_from_string(s, 'newick')
+        tree = dendropy.Tree.get_from_string(s, 'newick', extract_comment_metadata=True)
         tree.comment_metadata = nexustokenizer.parse_comment_metadata(tree.comments)
         for nd in tree.postorder_node_iter():
             nd.comment_metadata = nexustokenizer.parse_comment_metadata(nd.comments)
@@ -223,7 +224,7 @@ END;
     def testNHXBasic(self):
         s = self.nhx_metadata_str
         _LOG.info("Tree = %s" % s)
-        tree = dendropy.Tree.get_from_string(s, 'newick')
+        tree = dendropy.Tree.get_from_string(s, 'newick', extract_comment_metadata=True)
         tree.comment_metadata = nexustokenizer.parse_comment_metadata(tree.comments)
         for nd in tree.postorder_node_iter():
             nd.comment_metadata = nexustokenizer.parse_comment_metadata(nd.comments)

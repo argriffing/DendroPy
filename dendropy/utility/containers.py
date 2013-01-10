@@ -129,7 +129,7 @@ class OrderedSet(list):
         return "[%s]" % ", ".join([str(i) for i in self])
 
     def __repr__(self):
-        return "OrderedSet([%s])" % ", ".join([str(i) for i in self])
+        return "%s([%s])" % (self.__class__.__name__, ", ".join([str(i) for i in self]))
 
     def __hash__(self):
         return hash( (t for t in self) )
@@ -144,6 +144,11 @@ class OrderedSet(list):
         else:
             return None
 
+    def update(self, x):
+        for i in x:
+            if i not in self:
+                list.append(self, i)
+
     def extend(self, t):
         for x in t:
             self.append(x)
@@ -155,20 +160,27 @@ class NormalizedBitmaskDict(dict):
     """
     Keys, {K_i}, are longs. `mask` must be provided before elements can be
     added removed from dictionary. All keys are normalized such that the right-
-    most bit is '1'. That is, if the key's right-most bit is '1', it is added
+    most bit is '0'. That is, if the key's right-most bit is '0', it is added
     as-is, otherwise it is complemented by XOR'ing it with 'mask'.
     """
 
     def normalize(key, mask):
         if key & 1:
             return (~key) & mask
-        return key
+        else:
+            return key & mask
+        # assert (key & mask) == key
+        # return key
     normalize = staticmethod(normalize)
 
     def __init__(self, other=None, mask=None):
         "__init__ assigns `mask`, and then populates from `other`, if given."
         dict.__init__(self)
-        self.mask = mask
+        if not ( mask & 1 ):
+            self.mask = ~mask
+        else:
+            self.mask = mask
+        # self.mask = mask
         if other is not None:
             if isinstance(other, NormalizedBitmaskDict):
                 self.mask = other.mask
@@ -177,7 +189,7 @@ class NormalizedBitmaskDict(dict):
                     self[key] = val
 
     def __deepcopy__(self, memo):
-        o = NormalizedBitmaskDict()
+        o = NormalizedBitmaskDict(mask=self.mask)
         memo[id(self)] = o
         o.mask = self.mask
         for key, val in self.items():
@@ -273,6 +285,13 @@ class OrderedCaselessDict(dict):
                         self._ordered_keys.append(str(key))
                     super(OrderedCaselessDict, \
                           self).__setitem__(key.lower(), val)
+
+    def __deepcopy__(self, memo):
+        o = self.__class__()
+        memo[id(self)] = o
+        for key, val in self.items():
+            o[key] = copy.deepcopy(val, memo)
+        return o
 
     def copy(self):
         "Returns a shallow copy of self."

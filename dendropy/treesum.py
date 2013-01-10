@@ -26,7 +26,7 @@ from dendropy import dataobject
 from dendropy import treecalc
 from dendropy import treesim
 from dendropy.utility.containers import OrderedDict
-from dendropy.utility.statistics import mean_and_sample_variance
+from dendropy.mathlib.statistics import mean_and_sample_variance
 
 ##############################################################################
 ## TreeSummarizer
@@ -147,7 +147,8 @@ class TreeSummarizer(object):
             node.edge.length = support_value
         if self.add_node_metadata and attr_name:
             setattr(node, attr_name, support_value)
-            node.annotate(attr_name)
+            node.annotations.drop(name=attr_name)
+            node.annotations.add_bound_attribute(attr_name)
         return node
 
     def map_split_support_to_tree(self, tree, split_distribution):
@@ -193,6 +194,7 @@ class TreeSummarizer(object):
         split_edge_length_summaries = split_distribution.split_edge_length_summaries
         split_node_age_summaries = split_distribution.split_node_age_summaries
         fields = ['mean', 'median', 'sd', 'hpd95', 'quant_5_95', 'range']
+
         for edge in tree.preorder_edge_iter():
             split = edge.split_bitmask
             nd = edge.head_node
@@ -203,12 +205,15 @@ class TreeSummarizer(object):
                     for field in fields:
                         attr_name = summary_name + "_" + field
                         setattr(summary_target, attr_name, summary[field])
-                        summary_target.annotate(attr_name)
+                        # clear annotations, which might be associated with either nodes
+                        # or edges due to the way NEXUS/NEWICK node comments are parsed
+                        nd.annotations.drop(name=attr_name)
+                        edge.annotations.drop(name=attr_name)
+                        summary_target.annotations.add_bound_attribute(attr_name)
                 else:
                     for field in fields:
                         attr_name = summary_name + "_" + field
                         setattr(summary_target, attr_name, None)
-                        #nd.annotate(attr_name)
 
     def summarize_node_ages_on_tree(self,
             tree,

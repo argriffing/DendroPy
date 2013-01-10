@@ -31,13 +31,14 @@ from dendropy.test.support import datagen
 from dendropy.test.support import datatest
 from dendropy.test.support import extendedtest
 from dendropy import dataio
+from dendropy.dataio.nexustokenizer import TooManyTaxaError
 from dendropy.utility import error
 from dendropy.utility.messaging import get_logger
 import dendropy
 
 _LOG = get_logger(__name__)
 
-class NexusGeneralParseCharsTest(datatest.DataObjectVerificationTestCase):
+class NexusGeneralParseCharsTest(datatest.AnnotatedDataObjectVerificationTestCase):
 
     def check_chars_against_expected(self, data_filename, expected_filename, datatype):
         self.logger.info("Checking '%s' => %s" % (data_filename, datatype.__name__))
@@ -99,7 +100,7 @@ class NexusParseContinuousCharsTest(NexusGeneralParseCharsTest):
                 "pythonidae_continuous.chars.txt",
                 dendropy.ContinuousCharacterMatrix)
 
-class NexusParseStandardCharsWithMultistateTest(datatest.DataObjectVerificationTestCase):
+class NexusParseStandardCharsWithMultistateTest(datatest.AnnotatedDataObjectVerificationTestCase):
     """
     This tests the capability of the NEXUS parser in handling "{}" and
     "()" constructs in the data. Two files are used, one in which the
@@ -152,7 +153,7 @@ class NexusParseStandardCharsWithMultistateTest(datatest.DataObjectVerificationT
     def testStandardWithMultistateInBracesInterleaved(self):
         self.check_parse_with_ambiguities("apternodus.chars.interleaved.nexus", "apternodus.chars.hacked-for-tests.txt")
 
-class NexusTreeListReaderTest(datatest.DataObjectVerificationTestCase):
+class NexusTreeListReaderTest(datatest.AnnotatedDataObjectVerificationTestCase):
 
     def testReferenceTreeFileDistinctTaxa(self):
         ref_tree_list = datagen.reference_tree_list()
@@ -213,7 +214,7 @@ class NexusTreeListReaderTest(datatest.DataObjectVerificationTestCase):
                 ignore_taxon_order=True,
                 equal_oids=None)
 
-class NexusTreeListWriterTest(datatest.DataObjectVerificationTestCase):
+class NexusTreeListWriterTest(datatest.AnnotatedDataObjectVerificationTestCase):
 
     def testWriteTreeListDistinctTaxa(self):
         ref_tree_list = datagen.reference_tree_list()
@@ -287,7 +288,7 @@ end;
         for t in dendropy.dataio.tree_source_iter(StringIO(self.str3), "nexus"):
             _LOG.info(t.as_string("newick"))
 
-class MultiTreeSourceIterTest(datatest.DataObjectVerificationTestCase):
+class MultiTreeSourceIterTest(datatest.AnnotatedDataObjectVerificationTestCase):
 
     def setUp(self):
         self.ref_tree_list = datagen.reference_tree_list()
@@ -338,7 +339,7 @@ class MultiTreeSourceIterTest(datatest.DataObjectVerificationTestCase):
             self.assertDistinctButEqualTree(check_tree, test_tree, distinct_taxa=False, ignore_taxon_order=True)
         self.assertEqual(idx, 23)
 
-class NexusOrNewickTreeSourceIterTest(datatest.DataObjectVerificationTestCase):
+class NexusOrNewickTreeSourceIterTest(datatest.AnnotatedDataObjectVerificationTestCase):
 
     def setUp(self):
         self.ref_tree_list = datagen.reference_tree_list()
@@ -363,7 +364,7 @@ class NexusOrNewickTreeSourceIterTest(datatest.DataObjectVerificationTestCase):
         for idx, test_tree in enumerate(dataio.tree_source_iter(stream=stream, schema='nexus/newick', taxon_set=self.ref_tree_list.taxon_set)):
             self.assertDistinctButEqualTree(self.ref_tree_list[idx], test_tree, distinct_taxa=False)
 
-class NexusTreeDocumentReaderTest(datatest.DataObjectVerificationTestCase):
+class NexusTreeDocumentReaderTest(datatest.AnnotatedDataObjectVerificationTestCase):
 
     def testReferenceTreeFileDistinctTaxa(self):
         ref_tree_list = datagen.reference_tree_list()
@@ -421,7 +422,7 @@ class NexusTreeDocumentReaderTest(datatest.DataObjectVerificationTestCase):
                 ignore_taxon_order=True,
                 equal_oids=None)
 
-class NexusDocumentReadWriteTest(datatest.DataObjectVerificationTestCase):
+class NexusDocumentReadWriteTest(datatest.AnnotatedDataObjectVerificationTestCase):
 
     def testRoundTripReference(self):
         reference_dataset = datagen.reference_single_taxonset_dataset()
@@ -506,6 +507,170 @@ class NexusInterleavedWhitespace(extendedtest.ExtendedTestCase):
             for j, c in enumerate(s1):
                 self.assertEqual(c, s2[j])
 
+class NexusTaxaCaseInsensitivityTest(extendedtest.ExtendedTestCase):
+
+    def setUp(self):
+        self.data_str = """\
+#NEXUS
+
+BEGIN TAXA;
+    DIMENSIONS NTAX=5;
+    TAXLABELS AAA BBB CCC DDD EEE;
+END;
+
+BEGIN CHARACTERS;
+    DIMENSIONS  NCHAR=8;
+    FORMAT DATATYPE=DNA GAP=- MISSING=? MATCHCHAR=. INTERLEAVE;
+    MATRIX
+        AAA ACGT
+        BBB ACGT
+        CCC ACGT
+        DDD ACGT
+        EEE ACGT
+
+        aaa ACGT
+        bbb ACGT
+        ccc ACGT
+        ddd ACGT
+        eee ACGT
+    ;
+END;
+"""
+        self.tree_str = """\
+#NEXUS
+
+BEGIN TAXA;
+    DIMENSIONS NTAX=5;
+    TAXLABELS AAA BBB CCC DDD EEE;
+END;
+
+BEGIN TREES;
+    TREE 1 = (AAA, (bbb, (ccc, (ddd, eee))));
+END;
+"""
+
+    def testCaseInsensitiveTrees(self):
+        d = dendropy.TreeList.get_from_string(self.tree_str,
+                'nexus',
+                case_sensitive_taxon_labels=False)
+        expected = ["AAA", "BBB", "CCC", "DDD", "EEE"]
+        observed = [t.label.upper() for t in d.taxon_set]
+        for i, x in enumerate(expected):
+            self.assertTrue(x in observed)
+        for i, x in enumerate(observed):
+            self.assertTrue(x in expected)
+        self.assertEqual(len(d.taxon_set), 5)
+
+    def testDefaultCaseSensitivityTrees(self):
+        d = dendropy.TreeList.get_from_string(self.tree_str,
+                'nexus')
+        expected = ["AAA", "BBB", "CCC", "DDD", "EEE"]
+        observed = [t.label.upper() for t in d.taxon_set]
+        for i, x in enumerate(expected):
+            self.assertTrue(x in observed)
+        for i, x in enumerate(observed):
+            self.assertTrue(x in expected)
+        self.assertEqual(len(d.taxon_set), 5)
+
+    def testCaseSensitiveTrees(self):
+        d = dendropy.TreeList.get_from_string(self.tree_str,
+                'nexus',
+                case_sensitive_taxon_labels=True)
+        expected = ["AAA", "BBB", "CCC", "DDD", "EEE", "bbb", "ccc", "ddd", "eee"]
+        observed = [t.label for t in d.taxon_set]
+        for i, x in enumerate(expected):
+            self.assertTrue(x in observed)
+        for i, x in enumerate(observed):
+            self.assertTrue(x in expected)
+        self.assertEqual(len(d.taxon_set), 9)
+
+    def testCaseInsensitiveChars(self):
+        d = dendropy.DnaCharacterMatrix.get_from_string(self.data_str, 'nexus', case_sensitive_taxon_labels=False)
+        expected = ["AAA", "BBB", "CCC", "DDD", "EEE"]
+        observed = [t.label.upper() for t in d.taxon_set]
+        for i, x in enumerate(expected):
+            self.assertTrue(x in observed)
+        for i, x in enumerate(observed):
+            self.assertTrue(x in expected)
+        self.assertEqual(len(d.taxon_set), 5)
+
+    def testCaseSensitiveChars(self):
+        #d = dendropy.DnaCharacterMatrix.get_from_string(self.data_str, 'nexus', case_sensitive_taxon_labels=False)
+        self.assertRaises(error.DataParseError,
+                dendropy.DnaCharacterMatrix.get_from_string,
+                self.data_str,
+                'nexus',
+                case_sensitive_taxon_labels=True)
+
+    def testDefaultCaseSensitivityChars(self):
+        d = dendropy.DnaCharacterMatrix.get_from_string(self.data_str, 'nexus')
+        expected = ["AAA", "BBB", "CCC", "DDD", "EEE"]
+        observed = [t.label.upper() for t in d.taxon_set]
+        for i, x in enumerate(expected):
+            self.assertTrue(x in observed)
+        for i, x in enumerate(observed):
+            self.assertTrue(x in expected)
+        self.assertEqual(len(d.taxon_set), 5)
+
+
+class NexusTooManyTaxaTest(extendedtest.ExtendedTestCase):
+
+    def testTooManyTaxaNonInterleaved(self):
+        data_str = """\
+#NEXUS
+
+BEGIN TAXA;
+    DIMENSIONS NTAX=5;
+    TAXLABELS AAA BBB CCC DDD EEE;
+END;
+
+BEGIN CHARACTERS;
+    DIMENSIONS  NCHAR=8;
+    FORMAT DATATYPE=DNA GAP=- MISSING=? MATCHCHAR=.;
+    MATRIX
+        AAA ACGTACGT
+        BBB ACGTACGT
+        CCC ACGTACGT
+        DDD ACGTACGT
+        EEE ACGTACGT
+        FFF ACGTACGT
+    ;
+END;
+"""
+        #d = dendropy.DnaCharacterMatrix.get_from_string(data_str, 'nexus')
+        self.assertRaises(TooManyTaxaError, dendropy.DnaCharacterMatrix.get_from_string, data_str, 'nexus')
+
+    def testTooManyTaxaInterleaved(self):
+        data_str = """\
+#NEXUS
+
+BEGIN TAXA;
+    DIMENSIONS NTAX=5;
+    TAXLABELS AAA BBB CCC DDD EEE;
+END;
+
+BEGIN CHARACTERS;
+    DIMENSIONS  NCHAR=8;
+    FORMAT DATATYPE=DNA GAP=- MISSING=? MATCHCHAR=. INTERLEAVE;
+    MATRIX
+        AAA ACGT
+        BBB ACGT
+        CCC ACGT
+        DDD ACGT
+        EEE ACGT
+
+        AAA ACGT
+        BBB ACGT
+        CCC ACGT
+        DDD ACGT
+        EEE ACGT
+        FFF ACGT
+    ;
+END;
+"""
+        #d = dendropy.DnaCharacterMatrix.get_from_string(data_str, 'nexus')
+        self.assertRaises(TooManyTaxaError, dendropy.DnaCharacterMatrix.get_from_string, data_str, 'nexus')
+
 class NexusInternalNodeLabelsAsNonTaxa(extendedtest.ExtendedTestCase):
 
     def setUp(self):
@@ -532,26 +697,28 @@ end;
     def testParseWithKeyword(self):
         t = dendropy.TreeList.get_from_string(self.trees_string, 'nexus', suppress_internal_node_taxa=True)
 
-class NexusCharsSubsetsTest(datatest.DataObjectVerificationTestCase):
+class NexusCharsSubsetsTest(datatest.AnnotatedDataObjectVerificationTestCase):
 
-    def testSubsets(self):
+    def verify_subsets(self, src_filename, expected_sets):
+        """
+        `src_filename` -- name of file containing full data and charsets
+                          statement
+        `expected_sets` -- dictionary with keys = label of charset, and values
+                           = name of file with subset of characters correspond
+                           to the charset.
+        """
+        _LOG.debug(src_filename)
         src_data = dendropy.DnaCharacterMatrix.get_from_path(
-                pathmap.char_source_path('primates.chars.subsets-all.nexus'),
+                pathmap.char_source_path(src_filename),
                 'nexus')
-        expected_sets = {
-                "coding" : "primates.chars.subsets-coding.nexus",
-                "noncoding" : "primates.chars.subsets-noncoding.nexus",
-                "1stpos" : "primates.chars.subsets-1stpos.nexus",
-                "2ndpos" : "primates.chars.subsets-2ndpos.nexus",
-                "3rdpos" : "primates.chars.subsets-3rdpos.nexus",
-                }
         state_alphabet = src_data.default_state_alphabet
         self.assertEqual(len(src_data.character_subsets), len(expected_sets))
         for label, expected_data_file in expected_sets.items():
+
+            _LOG.debug(label)
+
             self.assertTrue(label in src_data.character_subsets)
-
             result_subset = src_data.export_character_subset(label)
-
             expected_subset = dendropy.DnaCharacterMatrix.get_from_path(
                 pathmap.char_source_path(expected_data_file),
                 'nexus')
@@ -575,6 +742,68 @@ class NexusCharsSubsetsTest(datatest.DataObjectVerificationTestCase):
                 e2[idx].value = dummy_state
             self.assertEqual(r2_symbols, result_subset[1].symbols_as_string())
 
+    def testNonInterleaved(self):
+        """
+        Charsets here go through all forms of position specification.
+        """
+        expected_sets = {
+                "coding" : "primates.chars.subsets-coding.nexus",
+                "noncoding" : "primates.chars.subsets-noncoding.nexus",
+                "1stpos" : "primates.chars.subsets-1stpos.nexus",
+                "2ndpos" : "primates.chars.subsets-2ndpos.nexus",
+                "3rdpos" : "primates.chars.subsets-3rdpos.nexus",
+                }
+        self.verify_subsets('primates.chars.subsets-all.nexus', expected_sets)
+
+    def testInterleaved(self):
+        """
+        A bug in DendroPy resulted in the block immediately following an
+        interleaved character matrix DATA or CHARACTERS block being skipped.
+        This tests for it by ensuring that the ASSUMPTIONS block following an
+        interleaved CHARACTERS block is parsed. A better test would approach
+        the issue more directly, by checking to see if block parsing left the
+        stream reader in the correct position.
+        """
+        expected_sets = {
+                "c1" : "interleaved-charsets-c1.nex",
+                "c2" : "interleaved-charsets-c2.nex",
+                "c3" : "interleaved-charsets-c3.nex",
+                }
+        self.verify_subsets('interleaved-charsets-all.nex', expected_sets)
+
+class NexusInternalTaxaTest(datatest.AnnotatedDataObjectVerificationTestCase):
+
+    def setUp(self):
+        self.tree_str = """
+#NEXUS
+BEGIN TAXA;
+    DIMENSIONS NTAX=5;
+    TAXLABELS t1 t2 t3 t4 t5 ;
+END;
+BEGIN TREES;
+    TREE 0 = [&U] (t1,(t2,(t3,(t4,t5)i1)i2)i3)i0;
+END;
+"""
+        self.expected_internal_labels = ['i1', 'i2', 'i3', 'i0']
+        self.expected_external_labels = ['t1', 't2', 't3', 't4', 't5']
+
+    def check(self, tree, expected_taxon_labels):
+        self.assertEqual(len(tree.taxon_set), len(expected_taxon_labels))
+        tax_labels = [t.label for t in tree.taxon_set]
+        for label in expected_taxon_labels:
+            self.assertTrue(label in tax_labels)
+
+    def testDefaultInternalTaxaParsing(self):
+        tree = dendropy.Tree.get_from_string(self.tree_str, "nexus")
+        self.check(tree, self.expected_external_labels)
+
+    def testSuppressInternalTaxaParsing(self):
+        tree = dendropy.Tree.get_from_string(self.tree_str, "nexus", suppress_internal_node_taxa=True)
+        self.check(tree, self.expected_external_labels)
+
+    def testDefaultInternalTaxaParsing(self):
+        tree = dendropy.Tree.get_from_string(self.tree_str, "nexus", suppress_internal_node_taxa=False)
+        self.check(tree, self.expected_external_labels + self.expected_internal_labels)
 
 if __name__ == "__main__":
     unittest.main()

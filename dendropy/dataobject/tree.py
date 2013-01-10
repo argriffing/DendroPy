@@ -34,7 +34,7 @@ from dendropy.utility import iosys
 from dendropy.utility import error
 from dendropy.utility import textutils
 from dendropy.utility import termutils
-from dendropy.dataobject.base import IdTagged
+from dendropy.dataobject import base
 from dendropy.dataobject.taxon import TaxonSet, TaxonSetLinked, TaxonLinked
 from dendropy import treesplit
 
@@ -46,6 +46,14 @@ class TreeList(list, TaxonSetLinked, iosys.Readable, iosys.Writeable):
     Collects and coordinates a list of trees with the associated with the
     same set of taxa.
     """
+
+    def _parse_from_stream(cls, stream, schema, **kwargs):
+        tlist = cls()
+        tlist.read(stream=stream,
+                schema=schema,
+                **kwargs)
+        return tlist
+    _parse_from_stream = classmethod(_parse_from_stream)
 
     def __init__(self, *args, **kwargs):
         """
@@ -108,8 +116,9 @@ class TreeList(list, TaxonSetLinked, iosys.Readable, iosys.Writeable):
             tlst10.read_from_path("boot3.tre", "newick")
 
         """
+        specified_taxon_set = kwargs.get("taxon_set", None)
         TaxonSetLinked.__init__(self,
-                                taxon_set=kwargs.get("taxon_set", None),
+                                taxon_set=specified_taxon_set,
                                 label=kwargs.get("label", None),
                                 oid=kwargs.get("oid", None))
         iosys.Readable.__init__(self)
@@ -124,6 +133,8 @@ class TreeList(list, TaxonSetLinked, iosys.Readable, iosys.Writeable):
                 if (stream is not None) or (schema is not None):
                     raise error.MultipleInitializationSourceError(class_name=self.__class__.__name__, arg=args[0])
                 if isinstance(args[0], TreeList):
+                    if specified_taxon_set is None:
+                        self.taxon_set = args[0].taxon_set
                     for t in args[0]:
                         if not isinstance(t, Tree):
                             raise ValueError("TreeList() requires TreeList or list of Tree objects as initialization argument in this context")
@@ -146,9 +157,8 @@ class TreeList(list, TaxonSetLinked, iosys.Readable, iosys.Writeable):
     def __deepcopy__(self, memo):
         # we treat the taxa as immutable and copy the reference even in a deepcopy
         o = TaxonSetLinked.__deepcopy__(self, memo)
-        for k, v in self.__dict__.iteritems():
-            if k not in ['taxon_set', "_oid"]:
-                o.__dict__[k] = copy.deepcopy(v, memo)
+        for tree in self:
+            o.append(copy.deepcopy(tree, memo))
         return o
 
     def read(self, stream, schema, **kwargs):
@@ -466,6 +476,38 @@ class Tree(TaxonSetLinked, iosys.Readable, iosys.Writeable):
     root node as a node without `child_node` objects.
     """
 
+    def _parse_from_stream(cls, stream, schema, **kwargs):
+        from dendropy.dataobject.dataset import DataSet
+        collection_offset = kwargs.get("collection_offset", -1)
+        tree_offset = kwargs.get("tree_offset", 0)
+        kwargs["exclude_chars"] = True
+        kwargs["exclude_trees"] = False
+        d = DataSet(stream=stream, schema=schema, **kwargs)
+        if len(d.tree_lists) == 0:
+            raise ValueError("No trees in data source")
+        if collection_offset >= len(d.tree_lists):
+            raise IndexError("Tree collection offset %d specified, but data source only has %d tree collections defined" \
+                % (collection_offset, len(d.tree_lists)))
+        if collection_offset < 0:
+            i = 0
+            for tlist in d.tree_lists:
+                for t in tlist:
+                    if i == tree_offset:
+                        return t
+                    i += 1
+            if i <= tree_offset:
+                raise IndexError("Tree offset %d specified, but data source only has %d trees defined" \
+                            % (tree_offset, i+1))
+        else:
+            tlist = d.tree_lists[collection_offset]
+            if tree_offset < len(tlist):
+                t = tlist[tree_offset]
+                return t
+            else:
+                raise IndexError("Tree offset %d specified, but tree collection only has %d trees defined" \
+                        % (tree_offset, len(tlist)))
+    _parse_from_stream = classmethod(_parse_from_stream)
+
     ###########################################################################
     ## Special/Lifecycle methods
 
@@ -566,6 +608,9 @@ class Tree(TaxonSetLinked, iosys.Readable, iosys.Writeable):
             t11.reindex_subcomponent_taxa()
 
         """
+        if len(args) > 1:
+            # only allow 1 positional argument
+            raise error.TooManyArgumentsError(func_name=self.__class__.__name__, max_args=1, args=args)
         TaxonSetLinked.__init__(self,
                                 taxon_set=kwargs.get("taxon_set", None),
                                 label=kwargs.get("label", None),
@@ -577,9 +622,6 @@ class Tree(TaxonSetLinked, iosys.Readable, iosys.Writeable):
         self.comments = None
         self._is_rooted = None
         self.weight = None
-
-        if len(args) > 1:
-            raise error.TooManyArgumentsError(func_name=self.__class__.__name__, max_args=1, args=args)
         if len(args) == 1:
             if ("stream" in kwargs and kwargs["stream"] is not None) \
                     or ("schema" in kwargs and kwargs["schema"] is not None):
@@ -610,16 +652,21 @@ class Tree(TaxonSetLinked, iosys.Readable, iosys.Writeable):
         Clones the structure and properties of `Tree` object `other`.
         """
         t = copy.deepcopy(other)
-        self.__dict__ = t.__dict__
+        for k, v in t.__dict__.iteritems():
+            if k not in ["_annotations"]:
+                self.__dict__[k] = v
+        self.annotations = t.annotations
         return self
 
-    def __deepcopy__(self, memo):
-        # we treat the taxa as immutable and copy the reference even in a deepcopy
-        o = TaxonSetLinked.__deepcopy__(self, memo)
-        for k, v in self.__dict__.iteritems():
-            if k not in ['taxon_set', "_oid"]:
-                o.__dict__[k] = copy.deepcopy(v, memo)
-        return o
+    # def __deepcopy__(self, memo):
+    #     # we treat the taxa as immutable and copy the reference even in a deepcopy
+    #     o = TaxonSetLinked.__deepcopy__(self, memo)
+    #     for k, v in self.__dict__.iteritems():
+    #         if k not in ['taxon_set', "_oid", "annotations"]:
+    #             o.__dict__[k] = copy.deepcopy(v, memo)
+    #     o.annotations = copy.deepcopy(self.annotations, memo)
+    #     memo[id(self.annotations)] = o.annotations
+    #     return o
 
     def read(self, stream, schema, **kwargs):
         """
@@ -651,37 +698,8 @@ class Tree(TaxonSetLinked, iosys.Readable, iosys.Writeable):
         If ``tree_offset`` is not specified, then the first tree (offset=0) is
         returned.
         """
-        from dendropy.dataobject.dataset import DataSet
-        collection_offset = kwargs.get("collection_offset", -1)
-        tree_offset = kwargs.get("tree_offset", 0)
-        if "taxon_set" in kwargs:
-            self.taxon_set = kwargs["taxon_set"]
-        kwargs["exclude_chars"] = True
-        kwargs["exclude_trees"] = False
-        d = DataSet(stream=stream, schema=schema, **kwargs)
-        if len(d.tree_lists) == 0:
-            raise ValueError("No trees in data source")
-        if collection_offset >= len(d.tree_lists):
-            raise IndexError("Tree collection offset %d specified, but data source only has %d tree collections defined" \
-                % (collection_offset, len(d.tree_lists)))
-        if collection_offset < 0:
-            i = 0
-            for tlist in d.tree_lists:
-                for t in tlist:
-                    if i == tree_offset:
-                        self.__dict__ = t.__dict__
-                    i += 1
-            if i < tree_offset:
-                raise IndexError("Tree offset %d specified, but data source only has %d trees defined" \
-                            % (tree_offset, i+1))
-        else:
-            tlist = d.tree_lists[collection_offset]
-            if tree_offset < len(tlist):
-                t = tlist[tree_offset]
-                self.__dict__ = t.__dict__
-            else:
-                raise IndexError("Tree offset %d specified, but tree collection only has %d trees defined" \
-                        % (tree_offset, len(tlist)))
+        tree = Tree._parse_from_stream(stream, schema, **kwargs)
+        self.clone_from(tree)
 
     def write(self, stream, schema, **kwargs):
         """
@@ -1079,6 +1097,9 @@ class Tree(TaxonSetLinked, iosys.Readable, iosys.Writeable):
         `delete_outdegree_one` is False, then it will be
         removed from the tree.
         """
+        if new_seed_node.is_leaf():
+            raise ValueError('Rooting at a leaf is not supported')
+
         old_par = new_seed_node.parent_node
         if old_par is None:
             return
@@ -1293,9 +1314,16 @@ class Tree(TaxonSetLinked, iosys.Readable, iosys.Writeable):
         if update_splits:
             self.update_splits()
 
-    def resolve_polytomies(self, update_splits=False):
+    def resolve_polytomies(self, update_splits=False, rng=None):
         """
         Arbitrarily resolve polytomies using 0-length splits.
+
+        If `rng` is an object with a sample() method then the polytomy will be
+            resolved by sequentially adding (generating all tree topologies
+            equiprobably
+            rng.sample() should behave like random.sample()
+        If `rng` is not passed in, then polytomy is broken deterministically by
+            repeatedly joining pairs of children.
         """
         polytomies = []
         for node in self.postorder_node_iter():
@@ -1303,17 +1331,35 @@ class Tree(TaxonSetLinked, iosys.Readable, iosys.Writeable):
                 polytomies.append(node)
         for node in polytomies:
             children = node.child_nodes()
-            while len(children) > 2:
-                nn1 = Node()
-                nn1.edge.length = 0
-                c1 = children[0]
-                c2 = children[1]
-                node.remove_child(c1)
-                node.remove_child(c2)
-                nn1.add_child(c1)
-                nn1.add_child(c2)
-                node.add_child(nn1)
-                children = node.child_nodes()
+            nc = len(children)
+            if nc > 2:
+                if rng:
+                    to_attach = children[2:]
+                    for child in to_attach:
+                        node.remove_child(child)
+                    attachment_points = children[:2] + [node]
+                    while len(to_attach) > 0:
+                        next_child = to_attach.pop()
+                        next_sib = rng.sample(attachment_points, 1)[0]
+                        next_attachment = Node()
+                        p = next_sib.parent_node
+                        p.add_child(next_attachment)
+                        p.remove_child(next_sib)
+                        next_attachment.add_child(next_sib)
+                        next_attachment.add_child(next_child)
+                        attachment_points.append(next_attachment)
+                else:
+                    while len(children) > 2:
+                        nn1 = Node()
+                        nn1.edge.length = 0
+                        c1 = children[0]
+                        c2 = children[1]
+                        node.remove_child(c1)
+                        node.remove_child(c2)
+                        nn1.add_child(c1)
+                        nn1.add_child(c2)
+                        node.add_child(nn1)
+                        children = node.child_nodes()
         if update_splits:
             self.update_splits()
 
@@ -1349,15 +1395,50 @@ class Tree(TaxonSetLinked, iosys.Readable, iosys.Writeable):
         if update_splits:
             self.update_splits()
 
+    def xprune_taxa(self, taxa, update_splits=False, delete_outdegree_one=True):
+        """
+        Removes terminal nodes associated with Taxon objects given by the container
+        `taxa` (which can be any iterable, including a TaxonSet object) from `self`.
+        """
+        nodes_to_retain = []
+        for nd in self.postorder_node_iter():
+            if nd.taxon is not None and nd.taxon not in taxa:
+                nodes_to_retain.append(nd)
+        parent_nodes = []
+        nodes_to_retain.append(self.seed_node)
+        for nd in list(nodes_to_retain):
+            parent_node = nd.parent_node
+            while parent_node is not None and parent_node not in nodes_to_retain:
+                nodes_to_retain.append(parent_node)
+                parent_node = parent_node.parent_node
+        # print ">>"
+        # for nd in sorted(nodes_to_retain):
+        #     print nd.oid
+        # print "--"
+        to_process = [self.seed_node]
+        while to_process:
+            nd = to_process.pop(0)
+            children = nd._child_nodes
+            for ch in children:
+                if ch not in nodes_to_retain:
+                    nd._child_nodes.remove(ch)
+                    # ch.edge.tail_node.remove_child(ch)
+            to_process.extend(nd._child_nodes)
+        if delete_outdegree_one:
+            self.delete_outdegree_one_nodes()
+        # print self.as_string("newick")
+        # for nd in sorted(self.postorder_node_iter()):
+        #     print nd.oid
+        # print "<<\n"
+
     def prune_taxa(self, taxa, update_splits=False, delete_outdegree_one=True):
         """
         Removes terminal nodes associated with Taxon objects given by the container
         `taxa` (which can be any iterable, including a TaxonSet object) from `self`.
         """
-        nodes = []
-        for taxon in taxa:
-            nd = self.find_node(lambda x: x.taxon is taxon)
-            if nd is not None:
+        nodes_to_remove = []
+        for nd in self.postorder_node_iter():
+            if nd.taxon and nd.taxon in taxa:
                 nd.edge.tail_node.remove_child(nd)
         self.prune_leaves_without_taxa(update_splits=update_splits,
                 delete_outdegree_one=delete_outdegree_one)
@@ -1425,7 +1506,7 @@ class Tree(TaxonSetLinked, iosys.Readable, iosys.Writeable):
         for nd in internal_nodes:
             c = nd.child_nodes()
             rng.shuffle(c)
-            nd.set_children(c)
+            nd.set_child_nodes(c)
 
     def ladderize(self, ascending=True):
         """
@@ -1559,7 +1640,7 @@ class Tree(TaxonSetLinked, iosys.Readable, iosys.Writeable):
         Raises a Value Error if the tree is not ultrametric, is non-binary, or has
             only 2 leaves.
 
-        As a side effect a `depth` attribute is added to the nodes of the self.
+        As a side effect a `age` attribute is added to the nodes of the self.
 
         Pybus and Harvey. 2000. "Testing macro-evolutionary models using incomplete
         molecular phylogenies." Proc. Royal Society Series B: Biological Sciences.
@@ -1609,6 +1690,26 @@ class Tree(TaxonSetLinked, iosys.Readable, iosys.Writeable):
     ###########################################################################
     ## Metrics -- Comparative
 
+    def find_missing_splits(self, other_tree):
+        """
+        Returns a list of splits that are in self,  but
+        not in `other_tree`.
+        """
+        missing = []
+        if self.taxon_set is not other_tree.taxon_set:
+            raise TypeError("Trees have different TaxonSet objects: %s vs. %s" \
+                    % (hex(id(self.taxon_set)), hex(id(other_tree.taxon_set))))
+        if not hasattr(self, "split_edges"):
+            self.encode_splits()
+        if not hasattr(other_tree, "split_edges"):
+            other_tree.encode_splits()
+        for split in self.split_edges:
+            if split in other_tree.split_edges:
+                pass
+            else:
+                missing.append(split)
+        return missing
+
     def symmetric_difference(self, other_tree):
         """
         Returns the symmetric_distance between this tree and the tree given by
@@ -1644,6 +1745,28 @@ class Tree(TaxonSetLinked, iosys.Readable, iosys.Writeable):
         if other_tree.taxon_set is not self.taxon_set:
             other_tree = Tree(other_tree, taxon_set=self.taxon_set)
         return treecalc.euclidean_distance(self, other_tree)
+
+    def _check_children_for_split_compatibility(self, nd_list, split):
+        for nd in nd_list:
+            if is_compatible(nd.edge.split, split):
+                # see if nd has all of the leaves that are flagged as 1 in the split of interest
+                if (nd.edge.split & split) == split:
+                    return nd
+            else:
+                return None
+        return None
+
+    def is_compatible_with_split(self, split):
+        nd = self.root
+        while True:
+            if nd.edge.split == split:
+                return True
+            nd = self._check_children_for_split_compatibility(nd.child_nodes, split)
+            if nd is None:
+                return False
+
+    def is_compatible_with_tree(self, other):
+        pass
 
     ###########################################################################
     ## Metadata
@@ -1819,6 +1942,8 @@ class Tree(TaxonSetLinked, iosys.Readable, iosys.Writeable):
                 length/weights).
             ``show_internal_node_labels``
                 Boolean: whether or not to write out internal node labels.
+            - `show_internal_node_ids`
+                Boolean: whether or not to write out internal node id's.
             ``leaf_spacing_factor``
                 Positive integer: number of rows between each leaf.
             ``display_width``
@@ -1841,6 +1966,8 @@ class Tree(TaxonSetLinked, iosys.Readable, iosys.Writeable):
                 length/weights).
             ``show_internal_node_labels``
                 Boolean: whether or not to write out internal node labels.
+            - `show_internal_node_ids`
+                Boolean: whether or not to write out internal node id's.
             ``leaf_spacing_factor``
                 Positive integer: number of rows between each leaf.
             ``display_width``
@@ -1862,6 +1989,8 @@ class Tree(TaxonSetLinked, iosys.Readable, iosys.Writeable):
                 length/weights).
             ``show_internal_node_labels``
                 Boolean: whether or not to write out internal node labels.
+            - `show_internal_node_ids`
+                Boolean: whether or not to write out internal node id's.
             ``leaf_spacing_factor``
                 Positive integer: number of rows between each leaf.
             ``display_width``
@@ -2015,28 +2144,37 @@ class Node(TaxonLinked):
 
     ## INSTANCE METHODS #######################################################
 
-    def __init__(self, **kwargs):
+    def __init__(self,
+            taxon=None,
+            label=None,
+            oid=None,
+            edge=None,
+            edge_length=None):
         TaxonLinked.__init__(self,
-                             taxon=kwargs.get("taxon", None),
-                             label=kwargs.get("label", None),
-                             oid=kwargs.get("oid", None))
+                taxon=taxon,
+                label=label,
+                oid=oid)
         self.age = None
         self._edge = None
         self._child_nodes = []
         self._parent_node = None
-        self.edge = kwargs.get("edge", Edge(head_node=self))
-        self._edge.head_node = self
+        if edge is not None:
+            self.edge = edge
+        else:
+            self.edge = Edge(head_node=self, length=edge_length)
+        # try:
+        #     self.edge = kwargs["edge"]
+        # except KeyError:
+        #     self.edge = Edge(head_node=self)
+        # self._edge.head_node = self
         self.comments = []
 
     def __deepcopy__(self, memo):
+        memo[id(self._child_nodes)] = []
         o = TaxonLinked.__deepcopy__(self, memo)
-        for k, v in self.__dict__.iteritems():
-            if not k in ['_child_nodes', '_taxon', "_oid"]:
-                o.__dict__[k] = copy.deepcopy(v, memo)
-        for c in self.child_nodes():
-            o.add_child(copy.deepcopy(c, memo))
         memo[id(self._child_nodes)] = o._child_nodes
-        memo[id(self._oid)] = o._oid
+        for c in self._child_nodes:
+            o.add_child(copy.deepcopy(c, memo))
         return o
 
     ###########################################################################
@@ -2297,7 +2435,7 @@ class Node(TaxonLinked):
         "Returns the a shallow-copy list of all child nodes."
         return list(self._child_nodes)
 
-    def set_children(self, child_nodes):
+    def set_child_nodes(self, child_nodes):
         """
         Sets the child_nodes for this node.
         Side effects:
@@ -2305,10 +2443,14 @@ class Node(TaxonLinked):
             - sets the parent of each child node to this node
             - sets the tail node of each child to self
         """
-        self._child_nodes = child_nodes
+        self._child_nodes = list(child_nodes)
         for nidx in range(len(self._child_nodes)):
             self._child_nodes[nidx].parent_node = self
             self._child_nodes[nidx].edge.tail_node = self
+
+    def set_children(self, child_nodes):
+        """Legacy support: delegates to `set_child_nodes()`"""
+        return self.set_child_nodes(child_nodes)
 
     def _get_parent_node(self):
         """Returns the parent node of this node."""
@@ -2321,16 +2463,34 @@ class Node(TaxonLinked):
 
     parent_node = property(_get_parent_node, _set_parent_node)
 
-    def get_incident_edges(self):
+    def incident_edges(self):
+        """Return parent and child edges."""
         e = [c.edge for c in self._child_nodes]
         e.append(self.edge)
         return e
 
-    def get_adjacent_nodes(self):
+    def get_incident_edges(self):
+        """Legacy synonym for 'incident_edges()'"""
+        return self.incident_edges()
+
+    def adjacent_nodes(self):
+        """Return parent and child nodes."""
         n = [c for c in self._child_nodes]
         if self.parent_node:
             n.append(self.parent_node)
         return n
+
+    def get_adjacent_nodes(self):
+        """Legacy synonym for 'get_incident_edges()'"""
+        return self.adjacent_nodes()
+
+    def sister_nodes(self):
+        """Return all other children of parent, excluding self."""
+        p = self.parent_node
+        if not p:
+            return []
+        sisters = [nd for nd in p.child_nodes() if nd is not self]
+        return sisters
 
     def add_child(self, node, edge_length=None, pos=None):
         """
@@ -2532,7 +2692,7 @@ class Node(TaxonLinked):
         if self.is_leaf():
             return
         leaves = [i for i in self.leaf_iter()]
-        self.set_children(leaves)
+        self.set_child_nodes(leaves)
 
     ###########################################################################
     ## Representation
@@ -2601,8 +2761,10 @@ class Node(TaxonLinked):
 
     def as_newick_string(self, **kwargs):
         """
-        This returns the Node as a NEWICK
-        statement according to the given formatting rules.
+        This returns the Node as a NEWICK statement according to the given
+        formatting rules. This should be used for debugging purposes only.
+        For production purposes, use the the full-fledged 'as_string()'
+        method of the object.
         """
         out = StringIO()
         self.write_newick(out, **kwargs)
@@ -2610,10 +2772,13 @@ class Node(TaxonLinked):
 
     def write_newick(self, out, **kwargs):
         """
-        This returns the Node as a NEWICK
-        statement according to the given formatting rules.
+        This returns the Node as a NEWICK statement according to the given
+        formatting rules. This should be used for debugging purposes only.  For
+        production purposes, use the the full-fledged 'write_to_stream()'
+        method of the object.
         """
-        edge_lengths = kwargs.get('edge_lengths', True)
+        edge_lengths = not kwargs.get('suppress_edge_lengths', False)
+        edge_lengths = kwargs.get('edge_lengths', edge_lengths)
         child_nodes = self.child_nodes()
         if child_nodes:
             out.write('(')
@@ -2647,13 +2812,14 @@ class Node(TaxonLinked):
         """returns a string that is an identifier for the node.  This is called
         by the newick-writing functions, so the kwargs that affect how node
         labels show up in a newick string are the same ones used here:
-        `include_internal_labels` is a Boolean.
+        `suppress_internal_labels` is a Boolean, and defaults to False.
         """
         is_leaf = (len(self._child_nodes) == 0)
-        if (not is_leaf):
+        if not is_leaf:
             if kwargs.get("newick", False):
                 return self.as_newick_string()
-            if not kwargs.get("include_internal_labels"):
+            if kwargs.get("suppress_internal_labels", False) \
+                    or not kwargs.get("include_internal_labels", True):
                 return ""
         try:
             t = self.taxon
@@ -2713,7 +2879,7 @@ class Node(TaxonLinked):
 ##############################################################################
 ## Edge
 
-class Edge(IdTagged):
+class Edge(base.AnnotatedDataObject):
     """
     An edge on a tree. This class implements only the core
     functionality needed for trees.
@@ -2721,16 +2887,22 @@ class Edge(IdTagged):
 
     ## CLASS METHODS  ########################################################
 
-    def __init__(self, **kwargs):
+    def __init__(self,
+            tail_node=None,
+            head_node=None,
+            length=None,
+            rootedge=False,
+            label=None,
+            oid=None):
         """
         __init__ creates an edge from tail_node to head_node.  Modified from
         arbol.
         """
-        IdTagged.__init__(self, oid=kwargs.get("oid", None), label=kwargs.get("label", None))
-        self.tail_node = kwargs.get("tail_node", None)
-        self.head_node = kwargs.get("head_node", None)
-        self.rootedge = kwargs.get("rootedge", False)
-        self.length = kwargs.get("length", None)
+        base.AnnotatedDataObject.__init__(self, label=label, oid=oid)
+        self.tail_node = tail_node
+        self.head_node = head_node
+        self.rootedge = rootedge
+        self.length = length
 
     def __deepcopy__(self, memo):
         o = self.__class__()
@@ -2884,6 +3056,8 @@ class AsciiTreePlot(object):
                 length/weights).
             - `show_internal_node_labels`
                 Boolean: whether or not to write out internal node labels.
+            - `show_internal_node_ids`
+                Boolean: whether or not to write out internal node id's.
             - `leaf_spacing_factor`
                 Positive integer: number of rows between each leaf.
             - `display_width`
@@ -2892,6 +3066,7 @@ class AsciiTreePlot(object):
         """
         self.plot_metric = kwargs.get('plot_metric', 'depth')
         self.show_internal_node_labels = kwargs.get('show_internal_node_labels', False)
+        self.show_internal_node_ids = kwargs.get('show_internal_node_ids', False)
         self.leaf_spacing_factor = kwargs.get('leaf_spacing_factor', 2)
 #        self.null_edge_length = kwargs.get('null_edge_length', 0)
         self.display_width = kwargs.get('display_width', None)
@@ -2965,9 +3140,18 @@ class AsciiTreePlot(object):
     def get_label_for_node(self, nd):
         if nd.taxon and nd.taxon.label:
             return nd.taxon.label
-        if self.show_internal_node_labels: #@TODO: we should have a separate setting for labeling nodes with an id, but thus far when I want to see this, I want internal_nodes_labels too...
-            return '@' + str(id(nd))
-        return '@'
+        # @TODO: we should have a separate setting for labeling nodes with an
+        # id, but thus far when I want to see this, I want
+        # internal_nodes_labels too...
+        label = []
+        if self.show_internal_node_labels and nd.label:
+            label.append(nd.label)
+        if self.show_internal_node_ids:
+            label.append("@")
+            label.append(str(id(nd)))
+        if not label:
+            return "@"
+        return "".join(label)
 
     def compose(self, tree):
         self.reset()
@@ -3045,7 +3229,7 @@ class AsciiTreePlot(object):
                 for y in range(start_row, end_row):
                     self.grid[y][self.node_col[node]] = '|'
             label = []
-            if self.show_internal_node_labels or self.show_internal_node_labels:
+            if self.show_internal_node_labels or self.show_internal_node_ids:
                 label = self.get_label_for_node(node)
                 self.draw_internal_text(label, self.node_row[node], self.node_col[node])
             else:

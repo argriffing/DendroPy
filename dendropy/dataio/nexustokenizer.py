@@ -23,6 +23,7 @@ by both `dendropy.newick` and `dendropy.nexus` modules.
 
 import re
 from cStringIO import StringIO
+from dendropy import Annotation
 from dendropy.utility import containers
 from dendropy.utility.error import DataParseError
 from dendropy import dataobject
@@ -37,11 +38,14 @@ DEFAULT_HYPHENS_AS_TOKENS = False
 ## annotations to comments and vice versa
 
 def format_annotation_as_comments(annotated, nhx=False):
-    parts = []
-    annotes_dict = annotated.annotations()
-    if not annotes_dict:
+    if not annotated.annotations:
         return ""
-    for key, (value, type_hint) in annotes_dict.items():
+    parts = []
+    for annote in annotated.annotations:
+        if annote.is_hidden:
+            continue
+        key = annote.name
+        value = annote.value
         if isinstance(value, list) or isinstance(value, tuple):
             items = ",".join(str(i) for i in value)
             parts.append("%s={%s}" % (key, items))
@@ -64,6 +68,7 @@ def format_annotation_as_comments(annotated, nhx=False):
 FIGTREE_COMMENT_FIELD_PATTERN = re.compile(r'(.+?)=({.+?,.+?}|.+?)(,|$)')
 NHX_COMMENT_FIELD_PATTERN = re.compile(r'(.+?)=({.+?,.+?}|.+?)(:|$)')
 def parse_comment_metadata(comments,
+        annotations=None,
         field_name_map=None,
         field_value_types=None,
         strip_leading_trailing_spaces=True):
@@ -77,7 +82,8 @@ def parse_comment_metadata(comments,
     `field_value_types` should be a dictionary mapping field names (as given in
     the comment string) to the value type (e.g. {"node-age" : float}.
     """
-    metadata = {}
+    if annotations is None:
+        annotations = set()
     if isinstance(comments, str):
         comments = [comments]
     if field_name_map is None:
@@ -85,7 +91,10 @@ def parse_comment_metadata(comments,
     if field_value_types is None:
         field_value_types = {}
     for comment in comments:
-        if comment.startswith("&&"):
+        if comment.startswith("&&NHX:"):
+            pattern = NHX_COMMENT_FIELD_PATTERN
+            comment = comment[6:]
+        elif comment.startswith("&&"):
             pattern = NHX_COMMENT_FIELD_PATTERN
             comment = comment[2:]
         elif comment.startswith("&"):
@@ -112,8 +121,19 @@ def parse_comment_metadata(comments,
                     val = value_type(val)
             if key in field_name_map:
                 key = field_name_map[key]
-            metadata[key] = val
-    return metadata
+            annote = Annotation(
+                    name=key,
+                    value=val,
+                    # datatype_hint=datatype_hint,
+                    # name_prefix=name_prefix,
+                    # namespace=namespace,
+                    # name_is_prefixed=name_is_prefixed,
+                    # is_attribute=False,
+                    # annotate_as_reference=annotate_as_reference,
+                    # is_hidden=is_hidden,
+                    )
+            annotations.add(annote)
+    return annotations
 
 ###############################################################################
 ## RootingInterpreter
@@ -228,7 +248,11 @@ class StrToTaxon(object):
         def __init__(self, *args, **kwargs):
             DataParseError.__init__(self, *args, **kwargs)
 
-    def __init__(self, taxon_set, translate_dict=None, allow_repeated_use=False):
+    def __init__(self,
+            taxon_set,
+            translate_dict=None,
+            allow_repeated_use=False,
+            case_sensitive=True):
         """
         __init__ creates a StrToTaxon object with the requested policy of taxon
         repitition.
@@ -238,7 +262,20 @@ class StrToTaxon(object):
         calling the functions with the same label will generate a DataParseError
         indicating that the taxon has been used multiple times."""
         self.taxon_set = taxon_set
-        self.translate = translate_dict or {}
+        self.case_sensitive = case_sensitive
+        if translate_dict is not None:
+            self.translate = translate_dict
+        else:
+            if self.case_sensitive:
+                self.translate = containers.OrderedCaselessDict()
+            else:
+                self.translate = {}
+        if self.case_sensitive:
+            self.label_taxon = {}
+        else:
+            self.label_taxon = containers.OrderedCaselessDict()
+        for t in self.taxon_set:
+            self.label_taxon[t.label] = t
         if allow_repeated_use:
             self.returned_taxon_set = None
         else:
@@ -255,20 +292,34 @@ class StrToTaxon(object):
     def get_taxon(self, label):
         t = self.translate.get(label)
         if t is None:
-            t = self.taxon_set.get_taxon(label=label)
-        return self._returning(t, label)
+            t = self.label_taxon.get(label)
+        if t is None:
+            for taxon in self.taxon_set:
+                if taxon.label == label:
+                    t = taxon
+                    break
+        if t is not None:
+            self.label_taxon[label] = t
+            return self._returning(t, label)
+        else:
+            return None
 
     def require_taxon(self, label):
-        v = self.get_taxon(label)
-        if v is not None:
-            return v
-        t = self.taxon_set.require_taxon(label=label)
+        t = self.get_taxon(label)
+        if t is not None:
+            return t
+        t = dataobject.Taxon(label=label)
+        self.taxon_set.add(t)
+        self.label_taxon[label] = t
         return self._returning(t, label)
-#        if t is not None:
-#            self.translate[label] = t #@this could lead to problems when we support multiple taxon blocks, but now it'll speed thing up
 
     def index(self, t):
         return self.taxon_set.index(t)
+
+
+###############################################################################
+## tree_from_token_stream
+
 
 ###############################################################################
 ## tree_from_token_stream
@@ -287,9 +338,10 @@ def tree_from_token_stream(stream_tokenizer, **kwargs):
     finish_node_func = kwargs.get("finish_node_func", None)
     edge_len_type = kwargs.get("edge_len_type", float)
     taxon_set = kwargs.get("taxon_set", None)
-    suppress_internal_node_taxa = kwargs.get("suppress_internal_node_taxa", False)
+    suppress_internal_node_taxa = kwargs.get("suppress_internal_node_taxa", True)
     store_tree_weights = kwargs.get("store_tree_weights", False)
     extract_comment_metadata = kwargs.get('extract_comment_metadata', False)
+    case_sensitive_taxon_labels = kwargs.get('case_sensitive_taxon_labels', False)
     stream_tokenizer_extract_comment_metadata_setting = stream_tokenizer.extract_comment_metadata
     stream_tokenizer.extract_comment_metadata = extract_comment_metadata
     if taxon_set is None:
@@ -333,34 +385,20 @@ def tree_from_token_stream(stream_tokenizer, **kwargs):
 
     stt = kwargs.get('str_to_taxon')
     if stt is None:
-        stt = StrToTaxon(taxon_set, translate_dict, allow_repeated_use=False)
+        stt = StrToTaxon(taxon_set,
+                translate_dict,
+                allow_repeated_use=False,
+                case_sensitive=case_sensitive_taxon_labels)
 
     tree.seed_node = dataobject.Node()
     curr_node = tree.seed_node
     if encode_splits:
         curr_node.edge.split_bitmask = 0L
 
-    ### NHX format support ###
-    def store_node_comments(active_node):
-        if stream_tokenizer.comments:
-            active_node.comments.extend(stream_tokenizer.comments)
-
-    def store_comment_metadata(target):
-        if extract_comment_metadata:
-            if stream_tokenizer.has_comment_metadata():
-                comment_metadata = stream_tokenizer.comment_metadata
-                try:
-                    target.comment_metadata.update(comment_metadata)
-                except AttributeError:
-                    target.comment_metadata = comment_metadata
-                stream_tokenizer.clear_comment_metadata()
-            elif not hasattr(target, "comment_metadata"):
-                target.comment_metadata = {}
-
     # store and clear comments
     tree.comments = stream_tokenizer.comments
     stream_tokenizer.clear_comments()
-    store_comment_metadata(tree)
+    stream_tokenizer.store_comment_metadata(tree)
 
     while True:
         if not token or token == ';':
@@ -379,8 +417,8 @@ def tree_from_token_stream(stream_tokenizer, **kwargs):
             curr_node.add_child(tmp_node)
             curr_node = tmp_node
             token = stream_tokenizer.read_next_token()
-            store_node_comments(curr_node)
-            store_comment_metadata(curr_node)
+            stream_tokenizer.store_comments(curr_node)
+            stream_tokenizer.store_comment_metadata(curr_node)
         elif token == ',':
             tmp_node = dataobject.Node()
             if curr_node.is_leaf() and not curr_node.taxon:
@@ -401,8 +439,8 @@ def tree_from_token_stream(stream_tokenizer, **kwargs):
             p.add_child(tmp_node)
             curr_node = tmp_node
             token = stream_tokenizer.read_next_token()
-            store_node_comments(curr_node)
-            store_comment_metadata(curr_node)
+            stream_tokenizer.store_comments(curr_node)
+            stream_tokenizer.store_comment_metadata(curr_node)
         else:
             if token == ')':
                 if curr_node.is_leaf() and not curr_node.taxon:
@@ -431,10 +469,11 @@ def tree_from_token_stream(stream_tokenizer, **kwargs):
                     if curr_node.label:
                         raise stream_tokenizer.data_format_error("Multiple labels found for the same leaf (taxon '%s' and label '%s')" % (curr_node.label, token))
                     if suppress_internal_node_taxa:
+                    # if True:
                         t = None
                     else:
                         try:
-                            t = stt.get_taxon(label=token)
+                            t = stt.require_taxon(label=token)
                         except StrToTaxon.MultipleTaxonUseError, e:
                             raise stream_tokenizer.data_format_error(e.msg)
                 if t is None:
@@ -451,12 +490,12 @@ def tree_from_token_stream(stream_tokenizer, **kwargs):
                         split_map[cm] = e
 
             token = stream_tokenizer.read_next_token()
-            store_node_comments(curr_node)
-            store_comment_metadata(curr_node)
+            stream_tokenizer.store_comments(curr_node)
+            stream_tokenizer.store_comment_metadata(curr_node)
             if token == ':':
                 edge_length_str = stream_tokenizer.read_next_token(ignore_punctuation='-+.')
-                store_node_comments(curr_node)
-                store_comment_metadata(curr_node)
+                stream_tokenizer.store_comments(curr_node)
+                stream_tokenizer.store_comment_metadata(curr_node)
                 if not edge_length_str:
                     raise stream_tokenizer.data_format_error("Expecting a branch length after : but encountered the end of the tree description" )
                 try:
@@ -464,13 +503,26 @@ def tree_from_token_stream(stream_tokenizer, **kwargs):
                 except:
                     curr_node.edge.length = edge_length_str
                 token = stream_tokenizer.read_next_token()
-                store_node_comments(curr_node)
-                store_comment_metadata(curr_node)
+                stream_tokenizer.store_comments(curr_node)
+                stream_tokenizer.store_comment_metadata(curr_node)
     stream_tokenizer.extract_comment_metadata = stream_tokenizer_extract_comment_metadata_setting
     return tree
 
 ###############################################################################
 ## NexusTokenizer
+
+class TooManyTaxaError(DataParseError):
+
+    def __init__(self, row, column, taxon_set, max_taxa, label):
+        self.taxon_set = taxon_set
+        self.label = label
+        message = "Cannot add '%s': Declared number of taxa (%d) already defined: %s" % \
+                        (label,
+                        max_taxa,
+                        str([("%s" % t.label) for t in taxon_set]))
+        DataParseError.__init__(self, message=message,
+                row=row,
+                column=column)
 
 class NexusTokenizer(object):
     "Encapsulates reading NEXUS/NEWICK tokens from file."
@@ -558,7 +610,7 @@ class NexusTokenizer(object):
         self.preserve_underscores = False
         self.global_ignore_punctuation = set()
         self.hyphens_as_tokens = DEFAULT_HYPHENS_AS_TOKENS
-        self._comment_metadata = {}
+        self._comment_metadata = set()
 
     def _get_hyphens_as_tokens(self):
         return self._hyphens_as_tokens
@@ -584,13 +636,13 @@ class NexusTokenizer(object):
     current_file_char = property(_get_current_file_char, _set_current_file_char)
 
     def _get_comment_metadata(self):
-        return dict(self._comment_metadata)
+        return set(self._comment_metadata)
 
     def _set_comment_metadata(self, val):
         if val is None:
-            self._comment_metadata = {}
+            self._comment_metadata = set()
         else:
-            self._comment_metadata = dict(val)
+            self._comment_metadata = set(val)
 
     comment_metadata = property(_get_comment_metadata, _set_comment_metadata)
 
@@ -598,7 +650,7 @@ class NexusTokenizer(object):
         return len(self._comment_metadata) > 0
 
     def clear_comment_metadata(self):
-        self._comment_metadata = {}
+        self._comment_metadata.clear()
 
     def clear_comments(self):
         self.comments = []
@@ -623,6 +675,20 @@ class NexusTokenizer(object):
             self.current_file_char = read_char
             return self._current_file_char
         return None
+
+    def store_comments(self, target):
+        if self.comments:
+            # print "--- storing comments: {}".format(str(a) for a in self.comments)
+            try:
+                target.comments.extend(self.comments)
+            except:
+                target.comments = list(self.comments)
+
+    def store_comment_metadata(self, target):
+        if self._comment_metadata:
+            # print "--- storing metadata: {}".format(", ".join(str(a) for a in self._comment_metadata))
+            target.annotations.update(self._comment_metadata)
+            self._comment_metadata.clear()
 
     def _raw_read_next_char(self):
             read_char = self.stream_handle.read(1) # returns empty string if EOF
@@ -667,6 +733,7 @@ class NexusTokenizer(object):
             self.tree_weight_comment = comment
         elif self.extract_comment_metadata and comment.startswith("&"):
             self._comment_metadata.update(parse_comment_metadata([comment]))
+            # print "--- storing metadata: {}".format(", ".join(str(a) for a in self._comment_metadata))
         else:
             # only add comments if none of the above
             self.comments.append(comment)
@@ -990,10 +1057,22 @@ class NexusTokenizer(object):
             pass
 
     def data_format_error(self, message):
-            """
-            Returns an exception object parameterized with line and
-            column number values.
-            """
-            return DataParseError(message=message,
-                                   row=self.current_line_number,
-                                   column=self.current_col_number)
+        """
+        Returns an exception object parameterized with line and
+        column number values.
+        """
+        return DataParseError(message=message,
+                                row=self.current_line_number,
+                                column=self.current_col_number)
+
+    def too_many_taxa_error(self, taxon_set, max_taxa, label):
+        """
+        Returns an exception object parameterized with line and
+        column number values.
+        """
+        return TooManyTaxaError(row=self.current_line_number,
+                                column=self.current_col_number,
+                                taxon_set=taxon_set,
+                                max_taxa=max_taxa,
+                                label=label)
+

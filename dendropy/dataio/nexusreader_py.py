@@ -36,28 +36,73 @@ class NexusReader(iosys.DataReader):
 
     def __init__(self, **kwargs):
         """
-        __init__ recognizes the following keywords (in addition to those of `DataReader.__init__`):
+        __init__ recognizes the following keywords (in addition to
+        those of `DataReader.__init__`):
 
-            - `taxon_set`: TaxonSet object to use when reading data
-            - `as_rooted=True` (or `as_unrooted=False`): interprets trees as rooted
-            - `as_unrooted=True` (or `as_rooted=False`): interprets trees as unrooted
-            - `default_as_rooted=True` (or `default_as_unrooted=False`): interprets
-               all trees as rooted if rooting not given by `[&R]` or `[&U]` comments
-            - `default_as_unrooted=True` (or `default_as_rooted=False`): interprets
-               all trees as rooted if rooting not given by `[&R]` or `[&U]` comments
-            - `edge_len_type`: specifies the type of the edge lengths (int or float)
-            - `extract_comment_metadata`: if True, any 'hot comments' (i.e.,
-               comments that begin with '&') or NHX comments associated with
-               items will be processed and stored as a dictionary attribute of the
-               object: "comment_metadata".
-            - `store_tree_weights`: if True, process the tree weight ("[&W 1/2]")
-               comment associated with each tree, if any.
-            - `encode_splits`: specifies whether or not split bitmasks will be
-               calculated and attached to the edges.
-            - `finish_node_func`: is a function that will be applied to each node
-               after it has been constructed
-            - `allow_duplicate_taxon_labels` : if True, allow duplicate labels
-               on trees
+            `taxon_set`
+                TaxonSet object to use when reading data.
+
+            `as_rooted=True` (or `as_unrooted=False`)
+                Unconditionally interprets all trees as rooted.
+
+            `as_unrooted=True` (or `as_rooted=False`)
+                Unconditionally interprets all trees as unrooted.
+
+            `default_as_rooted=True` (or `default_as_unrooted=False`)
+                Interprets all trees as rooted if rooting not given by `[&R]`
+                or `[&U]` comments.
+
+            `default_as_unrooted=True` (or `default_as_rooted=False`)
+                Interprets all trees as rooted if rooting not given by `[&R]`
+                or `[&U]` comments.
+
+            `edge_len_type`
+                Specifies the type of the edge lengths (int or float).
+
+            `extract_comment_metadata`
+                If True, any comments that begin with '&' or '&&' associated with
+                items will be processed and stored as part of the annotation set of
+                the object (`annotations`) If False, this will be skipped. Defaults
+                to False.
+
+            `store_tree_weights`
+                If True, process the tree weight ("[&W 1/2]") comment
+                associated with each tree, if any.
+
+            `encode_splits`
+                Specifies whether or not split bitmasks will be calculated and
+                attached to the edges.
+
+            `finish_node_func`
+                Is a function that will be applied to each node after it has
+                been constructed.
+
+            `case_sensitive_taxon_labels`
+                If True, then taxon labels are case sensitive (different cases
+                = different taxa); defaults to False.
+
+            `allow_duplicate_taxon_labels`
+                if True, allow duplicate labels on trees
+
+            `preserve_underscores`
+                If True, unquoted underscores in labels will *not* converted to
+                spaces. Defaults to False: all underscores not protected by
+                quotes will be converted to spaces.
+
+            `suppress_internal_node_taxa`
+                If False, internal node labels will be instantantiatd into Taxon
+                objects.  Defaults to True: internal node labels will *not* be
+                treated as taxa.
+
+            `allow_duplicate_taxon_labels`
+                If True, then multiple identical taxon labels will be allowed.
+                Defaults to False: treat multiple identical taxon labels as an
+                error.
+
+            `hyphens_as_tokens`
+                If True, hyphens will be treated as special punctuation
+                characters. Defaults to False, hyphens not treated as special
+                punctuation characters.
 
         """
         iosys.DataReader.__init__(self, **kwargs)
@@ -66,10 +111,12 @@ class NexusReader(iosys.DataReader):
         self.finish_node_func = kwargs.get("finish_node_func", None)
         self.allow_duplicate_taxon_labels = kwargs.get("allow_duplicate_taxon_labels", False)
         self.preserve_underscores = kwargs.get('preserve_underscores', False)
-        self.suppress_internal_node_taxa = kwargs.get("suppress_internal_node_taxa", False)
+        self.suppress_internal_node_taxa = kwargs.get("suppress_internal_node_taxa", True)
         self.hyphens_as_tokens = kwargs.get('hyphens_as_tokens', nexustokenizer.DEFAULT_HYPHENS_AS_TOKENS)
         self.store_tree_weights = kwargs.get('store_tree_weights', False)
         self.extract_comment_metadata = kwargs.get('extract_comment_metadata', False)
+        self.case_sensitive_taxon_labels = kwargs.get('case_sensitive_taxon_labels', False)
+        self.edge_len_type = kwargs.get('edge_len_type', float)
 
     def read(self, stream):
         """
@@ -163,6 +210,15 @@ class NexusReader(iosys.DataReader):
         """
         return self.stream_tokenizer.data_format_error(message)
 
+    def too_many_taxa_error(self, taxon_set, label):
+        """
+        Returns an exception object parameterized with line and
+        column number values.
+        """
+        return self.stream_tokenizer.too_many_taxa_error(taxon_set=taxon_set,
+                max_taxa=self.file_specified_ntax,
+                label=label)
+
     ###########################################################################
     ## HELPERS
 
@@ -173,6 +229,8 @@ class NexusReader(iosys.DataReader):
                 extract_comment_metadata=self.extract_comment_metadata)
 
     def _consume_to_end_of_block(self, token):
+        if token:
+            token = token.upper()
         while not (token == 'END' or token == 'ENDBLOCK') \
             and not self.stream_tokenizer.eof \
             and not token==None:
@@ -240,6 +298,8 @@ class NexusReader(iosys.DataReader):
         else:
             while not self.stream_tokenizer.eof:
                 token = self.stream_tokenizer.read_next_token_ucase()
+                self.stream_tokenizer.store_comment_metadata(self.dataset)
+                self.stream_tokenizer.store_comments(self.dataset)
                 while token != None and token != 'BEGIN' and not self.stream_tokenizer.eof:
                     token = self.stream_tokenizer.read_next_token_ucase()
                 token = self.stream_tokenizer.read_next_token_ucase()
@@ -338,9 +398,20 @@ class NexusReader(iosys.DataReader):
             if token == 'TAXLABELS':
                 if taxon_set is None:
                     taxon_set = self._new_taxon_set()
+                self.stream_tokenizer.store_comment_metadata(taxon_set)
+                self.stream_tokenizer.store_comments(taxon_set)
                 self._parse_taxlabels_statement(taxon_set)
         self.stream_tokenizer.skip_to_semicolon() # move past END statement
         self.stream_tokenizer.allow_eof = True
+
+    def _get_taxon(self, taxon_set, label):
+        if not self.file_specified_ntax or len(taxon_set) < self.file_specified_ntax:
+            taxon = taxon_set.require_taxon(label=label, case_insensitive=not self.case_sensitive_taxon_labels)
+        else:
+            taxon = taxon_set.get_taxon(label=label, case_insensitive=not self.case_sensitive_taxon_labels)
+        if taxon is None:
+            raise self.too_many_taxa_error(taxon_set=taxon_set, label=label)
+        return taxon
 
     def _parse_taxlabels_statement(self, taxon_set=None):
         """
@@ -352,15 +423,18 @@ class NexusReader(iosys.DataReader):
         token = self.stream_tokenizer.read_next_token()
         while token != ';':
             label = token
-            if taxon_set.has_taxon(label=label):
-                pass
-            elif len(taxon_set) >= self.file_specified_ntax and not self.attached_taxon_set:
-                raise self.data_format_error("Cannot add '%s':" % label \
-                                      + " Declared number of taxa (%d) already defined: %s" % (self.file_specified_ntax,
-                                          str([("%s" % t.label) for t in taxon_set])))
-            else:
-                taxon_set.require_taxon(label=label)
+            # if taxon_set.has_taxon(label=label):
+            #     pass
+            # elif len(taxon_set) >= self.file_specified_ntax and not self.attached_taxon_set:
+            #     raise self.too_many_taxa_error(taxon_set=taxon_set, label=label)
+            # else:
+            #     taxon_set.require_taxon(label=label)
+            if len(taxon_set) >= self.file_specified_ntax and not self.attached_taxon_set:
+                raise self.too_many_taxa_error(taxon_set=taxon_set, label=label)
+            taxon = taxon_set.require_taxon(label=label)
             token = self.stream_tokenizer.read_next_token()
+            self.stream_tokenizer.store_comment_metadata(taxon)
+            self.stream_tokenizer.store_comments(taxon)
 
     def _parse_link_statement(self):
         """
@@ -534,7 +608,7 @@ class NexusReader(iosys.DataReader):
         taxon_set = char_block.taxon_set
         token = self.stream_tokenizer.read_next_token()
         while token != ';' and not self.stream_tokenizer.eof:
-            taxon = taxon_set.require_taxon(label=token)
+            taxon = self._get_taxon(taxon_set=taxon_set, label=token)
             if taxon not in char_block:
                 char_block[taxon] = dataobject.CharacterDataVector(taxon=taxon)
                 if self.interleave:
@@ -554,11 +628,13 @@ class NexusReader(iosys.DataReader):
         taxon_set = char_block.taxon_set
         symbol_state_map = char_block.default_state_alphabet.symbol_state_map()
         token = self.stream_tokenizer.read_next_token()
+        # character_type = dataobject.CharacterType(state_alphabet=char_block.default_state_alphabet)
+        # char_block.character_types.append(character_type)
 
         if self.interleave:
             try:
                 while token != ";" and not self.stream_tokenizer.eof:
-                    taxon = taxon_set.require_taxon(label=token)
+                    taxon = self._get_taxon(taxon_set=taxon_set, label=token)
                     if taxon not in char_block:
                         char_block[taxon] = dataobject.CharacterDataVector(taxon=taxon)
                     tokens = self.stream_tokenizer.read_statement_tokens_till_eol(ignore_punctuation="{}()")
@@ -567,14 +643,13 @@ class NexusReader(iosys.DataReader):
                     else:
                         break
                     token = self.stream_tokenizer.read_next_token()
-                token = self.stream_tokenizer.read_next_token()
             except nexustokenizer.NexusTokenizer.BlockTerminatedException:
                 if tokens is not None:
                     self._process_chars(''.join(tokens), char_block, symbol_state_map, taxon)
                 token = self.stream_tokenizer.read_next_token()
         else:
             while token != ';' and not self.stream_tokenizer.eof:
-                taxon = taxon_set.require_taxon(label=token)
+                taxon = self._get_taxon(taxon_set=taxon_set, label=token)
                 if taxon not in char_block:
                     char_block[taxon] = dataobject.CharacterDataVector(taxon=taxon)
                 while len(char_block[taxon]) < self.file_specified_nchar \
@@ -589,6 +664,9 @@ class NexusReader(iosys.DataReader):
                     raise self.data_format_error("Insufficient characters given for taxon '%s': expecting %d but only found %d ('%s')" \
                         % (taxon.label, self.file_specified_nchar, len(char_block[taxon]), char_block[taxon].symbols_as_string()))
                 token = self.stream_tokenizer.read_next_token()
+        # for vi, vec in enumerate(char_block.values()):
+        #     for ci, cell in enumerate(vec):
+        #         cell.character_type = character_type
 
     def _process_chars(self, char_group, char_block, symbol_state_map, taxon):
         if self.exclude_chars:
@@ -686,6 +764,11 @@ class NexusReader(iosys.DataReader):
 #                ti = taxon_set.index(t)
 #                t.split_bitmask = (1 << ti)
 
+    def store_comment_metadata(self, target):
+        if self.extract_comment_metadata and self.stream_tokenizer.has_comment_metadata():
+                target.annotations.update(self.stream_tokenizer.comment_metadata)
+                stream_tokenizer.clear_comment_metadata()
+
     def _parse_tree_statement(self, taxon_set=None):
         """
         Processes a TREE command. Assumes that the file reader is
@@ -709,7 +792,9 @@ class NexusReader(iosys.DataReader):
                 extract_comment_metadata=self.extract_comment_metadata,
                 store_tree_weights=self.store_tree_weights,
                 preserve_underscores=self.preserve_underscores,
-                suppress_internal_node_taxa=self.suppress_internal_node_taxa)
+                suppress_internal_node_taxa=self.suppress_internal_node_taxa,
+                edge_len_type=self.edge_len_type,
+                case_sensitive_taxon_labels=self.case_sensitive_taxon_labels)
         tree.label = tree_name
         if tree_comments is not None and len(tree_comments) > 0:
             tree.comments.extend(tree_comments)

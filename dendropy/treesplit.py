@@ -26,7 +26,7 @@ _LOG = messaging.get_logger(__name__)
 
 from dendropy.utility import containers
 from dendropy.utility import textutils
-from dendropy.utility import statistics
+from dendropy.mathlib import statistics
 
 import dendropy
 
@@ -223,7 +223,7 @@ def encode_splits(tree, create_dict=True, delete_outdegree_one=True):
             [otherwise]: a containers.NormalizedBitmaskDictionary where the keys are the
             normalized (unrooted) split representations and the values
             are edges. A normalized split_mask is where the split_bitmask
-            is complemented if the right-most bit is not '1' (or just
+            is complemented if the right-most bit is not '0' (or just
             the split_bitmask otherwise).
     If `delete_outdegree_one` is True then nodes with one
         will be deleted as they are encountered (this is required
@@ -235,13 +235,15 @@ def encode_splits(tree, create_dict=True, delete_outdegree_one=True):
     if taxon_set is None:
         taxon_set = tree.infer_taxa()
     if create_dict:
-        if tree.is_rooted:
-            tree.split_edges = {}
-        else:
-            atb = taxon_set.all_taxa_bitmask()
-            d = containers.NormalizedBitmaskDict(mask=atb)
-            tree.split_edges = d
+        tree.split_edges = {}
         split_map = tree.split_edges
+        # if tree.is_rooted:
+        #     tree.split_edges = {}
+        # else:
+        #     atb = taxon_set.all_taxa_bitmask()
+        #     d = containers.NormalizedBitmaskDict(mask=atb)
+        #     tree.split_edges = d
+        # split_map = tree.split_edges
     if not tree.seed_node:
         return
 
@@ -289,7 +291,32 @@ def encode_splits(tree, create_dict=True, delete_outdegree_one=True):
         edge.split_bitmask = cm
         if create_dict:
             split_map[cm] = edge
+    # create normalized bitmasks, where the full (tree) split mask is *not*
+    # all the taxa, but only those found on the tree
+    if not tree.is_rooted:
+        mask = tree.seed_node.edge.split_bitmask
+        d = containers.NormalizedBitmaskDict(mask=mask)
+        for k, v in tree.split_edges.items():
+            d[k] = v
+        tree.split_edges = d
 
+def is_compatible(split1, split2, mask):
+    """
+    Mask should have 1 for every leaf in the leaf_set
+    """
+    m1 = mask & split1
+    m2 = mask & split2
+    if 0 == (m1 & m2):
+        return True
+    c2 = mask ^ split2
+    if 0 == (m1 & c2):
+        return True
+    c1 = mask ^ split1
+    if 0 == (c1 & m2):
+        return True
+    if 0 == (c1 & c2):
+        return True
+    return False
 
 def delete_outdegree_one(tree):
     """This function mimics the tree changing operations `encode_splits` but

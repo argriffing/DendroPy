@@ -32,6 +32,7 @@ import dendropy.test
 from dendropy.utility import containers
 from dendropy.utility import messaging
 from dendropy.utility import fileutils
+from dendropy.utility import session
 _LOG = messaging.get_logger(__name__)
 
 import dendropy
@@ -54,6 +55,27 @@ else:
     ###############################################################################
     # HIGHER-LEVEL CONVENIENCE AND UTILITY METHODS
 
+    def symmetric_difference(tree1, tree2):
+        if tree1.taxon_set is not tree2.taxon_set:
+            trees = dendropy.TreeList([dendropy.Tree(tree1), dendropy.Tree(tree2)])
+        else:
+            trees = dendropy.TreeList([tree1, tree2], taxon_set=tree1.taxon_set)
+        tf = tempfile.NamedTemporaryFile()
+        trees.write_to_stream(tf, schema='nexus')
+        tf.flush()
+        assert tree1.is_rooted == tree2.is_rooted
+        sd = get_split_distribution(
+                tree_filepaths=[tf.name],
+                taxa_filepath=tf.name,
+                is_rooted=tree1.is_rooted,
+                burnin=0)
+        sf = sd.split_frequencies
+        conflicts = 0
+        for k, v in sf.items():
+            if v < 1.0:
+                conflicts += 1
+        return conflicts
+
     def get_split_distribution(tree_filepaths,
                                taxa_filepath,
                                is_rooted=False,
@@ -75,7 +97,75 @@ else:
         return sd
 
     ###############################################################################
-    ## PAUP* WRAPPER
+    ## PAUP* WRAPPERS
+
+    class PaupSession(session.Session):
+        """
+        Starts a PAUP* session, which remains active until explicitly closed.
+        Various commands can get executed and results returned.
+        """
+
+        EOC_FLAG = "@@@END-OF-COMMAND@@@"
+        FLAG_DETECT = re.compile(r'^\s*%s\s*$' % EOC_FLAG, re.MULTILINE)
+        EOC_FLAG_STRIP = re.compile(r"^(paup>)*\s*(\[!)*" + EOC_FLAG + "(\])*\s*$", re.MULTILINE)
+        # FLAG_DETECT = re.compile(r'[^\[]\s*%s\s*[^\]]' % EOC_FLAG, re.MULTILINE)
+
+        def __init__(self, paup_path=None):
+            session.Session.__init__(self, join_err_to_out=False)
+            if paup_path is None:
+                self.paup_path = PAUP_PATH
+            else:
+                self.paup_path = paup_path
+            self.start([self.paup_path])
+
+        def __del__(self):
+            self.stop()
+
+        def stop(self):
+            if self.process:
+                try:
+                    self.process.terminate()
+                except:
+                    pass
+            self.process = None
+
+        def send_command(self, command):
+            command = command + ";\n"
+            command = command + "[!" + self.EOC_FLAG + "]\n"
+            self.process.stdin.write(command)
+            self.process.stdin.flush()
+            stdout_block = ""
+            while True:
+                stdout = self._stdout_reader.read()
+                if stdout is not None:
+                    stdout_block = stdout_block + stdout
+                if self.FLAG_DETECT.search(stdout_block):
+                    stdout_block = self.EOC_FLAG_STRIP.sub("", stdout_block)
+                    break
+                # else:
+                #     print stdout_block
+            stderr_block = ""
+            while True:
+                    stderr = self._stderr_reader.read()
+                    if stderr is not None:
+                        stderr_block += stderr
+                    else:
+                        break
+            return stdout_block, stderr_block
+
+        def execute_file(self, filepath):
+            return self.send_command("set warnreset=no; execute %s;\n" % filepath)
+
+        def read_data(self, data):
+            """
+            Writes `data` as NEXUS-formatted file and
+            executes file within session.
+            """
+            cf = tempfile.NamedTemporaryFile()
+            data.write_to_stream(cf, "nexus")
+            cf.flush()
+            stdout, stderr = self.execute_file(cf.name)
+            return stdout, stderr
 
     class PaupRunner(object):
         """ Wrapper around PAUP* """
@@ -365,12 +455,63 @@ else:
                         tax_labels.append(ti_match.group(2).strip())
         return tax_labels, bipartitions, bipartition_counts, bipartition_freqs
 
+    def estimate_ultrametric_tree(
+            char_matrix,
+            topology_tree=None,
+            paup_path="paup"):
+        post_est_commands = """\
+        set crit=likelihood;
+        root rootmethod=midpoint;
+        lset userbr=no nst = 1 basefreq = eq rates = eq clock =yes;
+        lscore;
+        """
+        if topology_tree is None:
+            ultrametric_tree = estimate_tree(char_matrix,
+                    tree_est_criterion="nj",
+                    num_states=2,
+                    unequal_base_freqs=False,
+                    gamma_rates=False,
+                    prop_invar=False,
+                    extra_post_est_commands=post_est_commands)
+            return ultrametric_tree
+        else:
+            paup_block = """\
+            set warnreset=no;
+            exe '%(data_file)s';
+            gettrees file= '%(intree_file)s' warntree=no;
+            %(post_est_commands)s;
+            savetrees file=%(outtree_file)s format=nexus root=yes brlens=yes taxablk=yes maxdecimals=20;
+            """
+            cf = tempfile.NamedTemporaryFile()
+            char_matrix.write_to_stream(cf, schema='nexus', exclude_chars=False, exclude_trees=True)
+            cf.flush()
+            input_tree_file_handle = tempfile.NamedTemporaryFile()
+            input_tree_filepath = input_tree_file_handle.name
+            topology_tree.write_to_stream(input_tree_file_handle, schema="nexus")
+            input_tree_file_handle.flush()
+            output_tree_file_handle, output_tree_filepath = tempfile.mkstemp(text=True)
+            paup_args = {}
+            paup_args["data_file"] = cf.name
+            paup_args["intree_file"] = input_tree_filepath
+            paup_args["post_est_commands"] = post_est_commands
+            paup_args["outtree_file"] = output_tree_filepath
+            paup_block = paup_block % paup_args
+            paup_run = subprocess.Popen(['%s -n' % paup_path],
+                                        shell=True,
+                                        stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE)
+            stdout, stderr = paup_run.communicate(paup_block)
+            t = dendropy.Tree.get_from_path(output_tree_filepath, "nexus", taxon_set=char_matrix.taxon_set)
+            return t
+
     def estimate_tree(char_matrix,
                        tree_est_criterion="likelihood",
                        num_states=6,
                        unequal_base_freqs=True,
                        gamma_rates=True,
                        prop_invar=True,
+                       extra_pre_est_commands=None,
+                       extra_post_est_commands=None,
                        paup_path='paup'):
         """
         Given a dataset, `char_matrix`, estimates a tree using the given criterion.
@@ -381,16 +522,24 @@ else:
             'rates' : gamma_rates and 'gamma' or 'equal',
             'pinvar' : prop_invar and 'estimate' or '0',
         }
-        if tree_est_criterion == 'nj':
-            paup_args['tree'] = 'nj;'
-        else:
-            paup_args['tree'] = "set crit=%s; hsearch;" % tree_est_criterion
         cf = tempfile.NamedTemporaryFile()
         char_matrix.write_to_stream(cf, schema='nexus', exclude_chars=False, exclude_trees=True)
         cf.flush()
         paup_args['datafile'] = cf.name
         output_tree_file_handle, output_tree_filepath = tempfile.mkstemp(text=True)
         paup_args['est_tree_file'] = output_tree_filepath
+        if extra_pre_est_commands:
+            if isinstance(extra_pre_est_commands, str):
+                extra_pre_est_commands = [extra_pre_est_commands]
+            paup_args["pre_est_commands"] = ";\n".join(extra_pre_est_commands)
+        else:
+            paup_args["pre_est_commands"] = ""
+        if extra_post_est_commands:
+            if isinstance(extra_post_est_commands, str):
+                extra_post_est_commands = [extra_post_est_commands]
+            paup_args["post_est_commands"] = ";\n".join(extra_post_est_commands)
+        else:
+            paup_args["post_est_commands"] = ""
         paup_template = """\
         set warnreset=no;
         exe %(datafile)s;
@@ -399,8 +548,21 @@ else:
             paup_template += """\
         lset tratio=estimate rmatrix=estimate nst=%(nst)s basefreq=%(basefreq)s rates=%(rates)s shape=estimate pinvar=%(pinvar)s userbrlens=yes;
         """
+        if tree_est_criterion not in ["nj", "upgma"] :
+            paup_template += """\
+            set crit=%s;
+            """ % tree_est_criterion
         paup_template += """\
-        %(tree)s;
+        %(pre_est_commands)s;
+        """
+
+        if tree_est_criterion in ["nj", "upgma"] :
+            paup_template += tree_est_criterion + ";"
+        else:
+            paup_template += "hsearch;"
+
+        paup_template += """\
+        %(post_est_commands)s;
         savetrees file=%(est_tree_file)s format=nexus root=yes brlens=yes taxablk=yes maxdecimals=20;
         """
         paup_run = subprocess.Popen(['%s -n' % paup_path],
@@ -440,8 +602,8 @@ else:
             tf.flush()
             paup_args['tree'] = "gettrees file=%s storebrlens=yes;" % tf.name
         else:
-            if tree_est_criterion == 'nj':
-                paup_args['tree'] = 'nj;'
+            if tree_est_criterion in ["nj", "upgma"] :
+                paup_args['tree'] = tree_est_criterion
             else:
                 paup_args['tree'] = "set crit=%s; hsearch; set crit=like;" % tree_est_criterion
         if tree_user_brlens:
@@ -459,7 +621,7 @@ else:
         set warnreset=no;
         exe %(datafile)s;
         set crit=like;
-        lset tratio=estimate rmatrix=estimate nst=%(nst)s basefreq=%(basefreq)s rates=%(rates)s shape=estimate pinvar=%(pinvar)s userbrlens=yes;
+        lset tratio=estimate rmatrix=estimate nst=%(nst)s basefreq=%(basefreq)s rates=%(rates)s shape=estimate pinvar=%(pinvar)s userbrlens=%(userbrlens)s;
         %(tree)s;
         lscore 1 / userbrlens=%(userbrlens)s;
         savetrees file=%(est_tree_file)s format=nexus root=yes brlens=yes taxablk=yes maxdecimals=20;
@@ -504,3 +666,32 @@ else:
         t = dendropy.Tree.get_from_path(output_tree_filepath, "nexus", taxon_set=char_matrix.taxon_set)
         return t, results
 
+    def prune_taxa_from_trees(trees, taxa, paup_path='paup'):
+        """
+        Drops Taxon objects given in container `taxa` from TreeList `trees`
+        """
+        tf = tempfile.NamedTemporaryFile()
+        trees.write_to_stream(tf, schema='nexus')
+        tf.flush()
+        output_tree_file_handle, output_tree_filepath = tempfile.mkstemp(text=True)
+        tax_idxs = [ str(trees.taxon_set.index(t)+1) for t in taxa ]
+        tax_idxs = " ".join(tax_idxs)
+        paup_template = """\
+        set warnreset=no;
+        exe %s;
+        gett file=%s storebrlens=yes;
+        delete %s / prune;
+        savetrees file=%s format=nexus brlens=user taxablk=yes maxdecimals=20;
+        """ % (tf.name,
+               tf.name,
+               tax_idxs,
+               output_tree_filepath)
+        paup_run = subprocess.Popen(['%s -n' % paup_path],
+                                    shell=True,
+                                    stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE)
+        stdout, stderr = paup_run.communicate(paup_template)
+        t = dendropy.TreeList.get_from_path(output_tree_filepath,
+                "nexus",
+                taxon_set=trees.taxon_set)
+        return t

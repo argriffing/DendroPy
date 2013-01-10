@@ -38,7 +38,7 @@ from dendropy.dataobject.dataset import *
 
 from dendropy.dataio import get_reader, get_writer, tree_source_iter, multi_tree_source_iter
 
-from dendropy.utility import probability
+from dendropy.mathlib import probability
 from dendropy import coalescent
 from dendropy import continuous
 from dendropy import treecalc
@@ -57,7 +57,7 @@ from dendropy import treesum
 ## PACKAGE METADATA
 
 __project__ = "DendroPy"
-__version__ = "3.8.1"
+__version__ = "3.12.0"
 
 try:
     try:

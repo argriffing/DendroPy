@@ -25,7 +25,7 @@ from cStringIO import StringIO
 from dendropy.utility import iosys
 from dendropy.utility import containers
 from dendropy.utility import error
-from dendropy.dataobject.base import DataObject
+from dendropy.dataobject.base import AnnotatedDataObject
 from dendropy.dataobject.taxon import TaxonSet
 from dendropy.dataobject.tree import TreeList
 from dendropy.dataobject.char import CharacterMatrix
@@ -33,12 +33,20 @@ from dendropy.dataobject.char import CharacterMatrix
 ###############################################################################
 ## DataSet
 
-class DataSet(DataObject, iosys.Readable, iosys.Writeable):
+class DataSet(AnnotatedDataObject, iosys.Readable, iosys.Writeable):
     """
     The main data manager, consisting of a lists of taxa, trees, and character
     phylogenetic data objects, as well as methods to create, populate, access,
     and delete them.
     """
+
+    def _parse_from_stream(cls, stream, schema, **kwargs):
+        ds = cls()
+        ds.read(stream=stream,
+                schema=schema,
+                **kwargs)
+        return ds
+    _parse_from_stream = classmethod(_parse_from_stream)
 
     def __init__(self, *args, **kwargs):
         """
@@ -52,68 +60,56 @@ class DataSet(DataObject, iosys.Readable, iosys.Writeable):
             - keyword arguments that supply a file-like object (`stream`) to be parsed and a string (`schema`) specifying the schema of the data in the file-like object.
 
         """
-        DataObject.__init__(self)
+        AnnotatedDataObject.__init__(self, label=kwargs.get('label'), oid=kwargs.get('oid'))
         iosys.Writeable.__init__(self)
         iosys.Readable.__init__(self)
         self.taxon_sets = containers.OrderedSet()
         self.tree_lists = containers.OrderedSet()
         self.char_matrices = containers.OrderedSet()
         self.attached_taxon_set = None
-        taxa = kwargs.get("taxon_set", None)
-        attach_taxon_set = kwargs.get("attach_taxon_set", False)
-        if attach_taxon_set or (taxa is not None):
-            self.attach_taxon_set(taxa)
-        else:
-            self.attached_taxon_set = None
+        taxon_set, attach_taxon_set = self.process_taxon_set_directives(**kwargs)
         stream = kwargs.get("stream")
         if len(args) > 0:
             if (stream is not None) or (kwargs.get("schema") is not None):
                 raise error.MultipleInitializationSourceError(self.__class__.__name__, args[0])
             if len(args) == 1 and isinstance(args[0], DataSet):
-                if attach_taxon_set or (taxa is not None):
-                    raise error.MultipleInitializationSourceError("Cannot initialize DataSet from another DataSetobject taxon_set or attach_taxon_set are specified")
-                d = deepcopy(args[0])
-                self.__dict__ = d.__dict__
+                if attach_taxon_set or (taxon_set is not None):
+                    raise error.MultipleInitializationSourceError("Cannot initialize DataSet from another DataSet object when taxon_set or attach_taxon_set are specified")
+                self.clone_from(args[0])
             else:
                 for arg in args:
                     if isinstance(arg, DataSet):
-                        raise error.MultipleInitializationSourceError("Cannot initialize DataSet from another DataSetobject when multiple other initialization objects are given")
+                        raise error.MultipleInitializationSourceError("Cannot initialize DataSet from another DataSet object when multiple other initialization objects are given")
                     else:
                         self.add(arg)
         elif stream is not None:
-            if self.attached_taxon_set is not None:
-                kwargs["taxon_set"] = self.attached_taxon_set
+            # if self.attached_taxon_set is not None:
+            #     kwargs["taxon_set"] = self.attached_taxon_set
             self.process_source_kwargs(**kwargs)
 
     ###########################################################################
     ## CLONING
 
+    def clone_from(self, other):
+        d = deepcopy(other)
+        self.__dict__ = d.__dict__
+        self.annotations = d.annotations
+        return self
+
     def __deepcopy__(self, memo):
-        o = self.__class__()
+        taxon_sets = []
         for ts0 in self.taxon_sets:
-            ts1 = o.new_taxon_set(label=ts0.label)
+            ts1 = TaxonSet(label=ts0.label)
             memo[id(ts0)] = ts1
+            taxon_sets.append(ts1)
             for t in ts0:
-                ts1.new_taxon(label=t.label)
-                memo[id(t)] = ts1[-1]
-        memo[id(self.taxon_sets)] = o.taxon_sets
-        for tli, tl1 in enumerate(self.tree_lists):
-            tl2 = o.new_tree_list(label=tl1.label, taxon_set=memo[id(tl1.taxon_set)])
-            memo[id(tl1)] = tl2
-            for ti, t1 in enumerate(tl1):
-                t2 = deepcopy(t1, memo)
-                tl2.append(t2)
-                memo[id(t1)] = t2
-        memo[id(self.tree_lists)] = o.tree_lists
-        for cai, ca1 in enumerate(self.char_matrices):
-            ca2 = deepcopy(ca1, memo)
-            o.char_matrices.add(ca2)
-            memo[id(ca1)] = ca2
-        memo[id(self.char_matrices)] = o.char_matrices
-        if self.attached_taxon_set is not None:
-            o.attached_taxon_set = memo[id(self.attached_taxon_set)]
-        else:
-            o.attached_taxon_set = None
+                taxon = ts1.new_taxon(label=t.label)
+                memo[id(t)] = taxon
+        memo[id(self.taxon_sets)] = taxon_sets
+        o = AnnotatedDataObject.__deepcopy__(self, memo)
+        memo[id(self)] = o
+        o.taxon_sets = taxon_sets
+        assert o.annotations.target is o
         return o
 
     ###########################################################################
@@ -154,6 +150,7 @@ class DataSet(DataObject, iosys.Readable, iosys.Writeable):
         from dendropy.utility import iosys
         from dendropy.dataio import get_reader
         kwargs["dataset"] = self
+        self.process_taxon_set_directives(**kwargs)
         if self.attached_taxon_set is not None:
             if "taxon_set" not in kwargs:
                 kwargs["taxon_set"] = self.attached_taxon_set
@@ -166,6 +163,36 @@ class DataSet(DataObject, iosys.Readable, iosys.Writeable):
         except error.DataParseError, x:
             x.decorate_with_name(stream=stream)
             raise x
+
+    def process_taxon_set_directives(self, **kwargs):
+        extract=True
+        taxon_set = None
+        attach_taxon_set = False
+        if "taxon_set" in kwargs and "attached_taxon_set" in kwargs:
+            if kwargs["taxon_set"] is kwargs["attached_taxon_set"]:
+                raise TypeError("Specifying both 'taxon_set' and 'attached_taxon_set' is redundant")
+            else:
+                raise TypeError("Cannot specify both 'taxon_set' and 'attached_taxon_set'")
+        if "taxon_set" in kwargs:
+            taxon_set = kwargs.get("taxon_set", None)
+            attach_taxon_set = True
+        elif "attached_taxon_set" in kwargs:
+            taxon_set = kwargs["attached_taxon_set"]
+            if not isinstance(taxon_set, TaxonSet):
+                raise TypeError("'attached_taxon_set' argument must be an instance of TaxonSet")
+            attach_taxon_set = True
+        else:
+            taxon_set = None
+            attach_taxon_set = kwargs.get("attach_taxon_set", False)
+        if extract:
+            kwargs.pop("taxon_set", None)
+            kwargs.pop("attach_taxon_set", None)
+            kwargs.pop("attached_taxon_set", None)
+        if attach_taxon_set or (taxon_set is not None):
+            self.attach_taxon_set(taxon_set)
+        # else:
+        #     self.attached_taxon_set = None
+        return taxon_set, attach_taxon_set
 
     def write(self, stream, schema, **kwargs):
         """
@@ -321,7 +348,8 @@ class DataSet(DataObject, iosys.Readable, iosys.Writeable):
         "Creation and accession of new `TreeList` into `trees` of self."
         if self.attached_taxon_set is not None:
             if "taxon_set" in kwargs and kwargs["taxon_set"] is not self.attached_taxon_set:
-                raise TypeError("DataSet object is already attached to a TaxonSet, but different 'taxon_set' passed as argument")
+                raise TypeError("DataSet object is attached to TaxonSet %s, but 'taxon_set' argument specifies different TaxonSet %s" % (
+                    repr(self.attached_taxon_set), repr(kwargs["taxon_set"])))
             else:
                 kwargs["taxon_set"] = self.attached_taxon_set
         tree_list = TreeList(*args, **kwargs)
@@ -343,7 +371,8 @@ class DataSet(DataObject, iosys.Readable, iosys.Writeable):
         """
         if self.attached_taxon_set is not None:
             if "taxon_set" in kwargs and kwargs["taxon_set"] is not self.attached_taxon_set:
-                raise TypeError("DataSet object is already attached to a TaxonSet, but different 'taxon_set' passed as argument")
+                raise TypeError("DataSet object is attached to TaxonSet %s, but 'taxon_set' argument specifies different TaxonSet %s" % (
+                    repr(self.attached_taxon_set), repr(kwargs["taxon_set"])))
             else:
                 kwargs["taxon_set"] = self.attached_taxon_set
         char_matrix = char_matrix_type(*args, **kwargs)

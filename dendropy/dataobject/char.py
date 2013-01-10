@@ -1,4 +1,4 @@
-#! /usr/bin/env python
+#! /usr/bin/env pthon
 
 ##############################################################################
 ##  DendroPy Phylogenetic Computing Library.
@@ -21,22 +21,27 @@ This module handles the core definition of phylogenetic character data.
 """
 
 import copy
+import warnings
 from cStringIO import StringIO
 from dendropy.utility import error
 from dendropy.utility import iosys
-from dendropy.dataobject.base import IdTagged, Annotated
-from dendropy.dataobject.taxon import TaxonLinked, TaxonSetLinked
+from dendropy.utility import containers
+from dendropy.dataobject import base
+from dendropy.dataobject.taxon import TaxonLinked, TaxonSetLinked, TaxonSet
 
-class ContinuousCharElement(IdTagged):
+###############################################################################
+## Continuous Characters
+
+class ContinuousCharElement(base.AnnotatedDataObject):
     def __init__(self, value, column_def,  **kwargs):
-        IdTagged.__init__(self, **kwargs)
+        base.AnnotatedDataObject.__init__(self, label=kwargs.get('label'), oid=kwargs.get('oid'))
         self.value = value
         self.column_def = column_def
 
 ###############################################################################
 ## State Alphabet Infrastructure
 
-class StateAlphabetElement(IdTagged):
+class StateAlphabetElement(base.AnnotatedDataObject):
     """
     A character state definition, which can either be a fundamental state or
     a mapping to a set of other character states (for polymorphic or ambiguous
@@ -55,13 +60,15 @@ class StateAlphabetElement(IdTagged):
                  token=None,
                  multistate=SINGLE_STATE,
                  member_states=None):
-        IdTagged.__init__(self, oid=oid, label=label)
+        base.AnnotatedDataObject.__init__(self, label=label, oid=oid)
         self.symbol = symbol
         self.token = token
         self.multistate = multistate
         self.member_states = member_states
 
     def __str__(self):
+        # note that tests currently assume this particular string
+        # representation (i.e., undecorated symbol)
         return str(self.symbol)
 
     def _is_single_state(self):
@@ -101,16 +108,106 @@ class StateAlphabetElement(IdTagged):
 
     fundamental_tokens = property(_get_fundamental_tokens)
 
-class StateAlphabet(IdTagged, list):
+    def is_exact_correspondence(self, other):
+        """
+        Tries to determine if two StateAlphabetElement definitions
+        are equivalent by matching symbols.
+        """
+        match = True
+        if self.multistate != other.multistate:
+            return False
+        if self.multistate and other.multistate:
+            xf1 = self.fundamental_states
+            xf2 = other.fundamental_states
+            if len(xf1) != len(xf2):
+                match = False
+            else:
+                f1 = set(xf1)
+                f2 = set(xf2)
+                for m1 in f1:
+                    member_match = False
+                    for m2 in f2:
+                        if m1.is_exact_correspondence(m2):
+                            member_match = True
+                            f2.remove(m2)
+                            break
+                    if not member_match:
+                        match = False
+                        break
+                if match:
+                    f1 = set(xf1)
+                    f2 = set(xf2)
+                    for m2 in f2:
+                        member_match = False
+                        for m1 in f1:
+                            if m1.is_exact_correspondence(m2):
+                                f1.remove(m1)
+                                member_match = True
+                                break
+                        if not member_match:
+                            match = False
+                            break
+            return match
+        else:
+            try:
+                return self.symbol.upper() == other.symbol.upper()
+            except AttributeError:
+                return self.symbol == other.symbol
+
+    # def __deepcopy__(self, memo):
+    #     o = base.AnnotatedDataObject.__deepcopy__(self, memo)
+    #     o.symbol = self.symbol
+    #     o.token = self.token
+    #     o.multistate = self.multistate
+    #     o.member_states = copy.deepcopy(self.member_states)
+    #     return o
+
+###############################################################################
+## FixedStateAlphabetElement
+
+class FixedStateAlphabetElement(StateAlphabetElement):
+    """
+    Specialized for fixed state alphabets (e.g. DNA).
+    """
+
+    def __init__(self,
+                 oid=None,
+                 label=None,
+                 symbol=None,
+                 token=None,
+                 multistate=StateAlphabetElement.SINGLE_STATE,
+                 member_states=None):
+         StateAlphabetElement.__init__(self,
+                 oid=oid,
+                 label=label,
+                 symbol=symbol,
+                 token=token,
+                 multistate=multistate,
+                 member_states=member_states)
+
+    def __deepcopy__(self, memo):
+        memo[id(self)] = self
+        return self
+
+###############################################################################
+## StateAlphabet
+
+class StateAlphabet(base.AnnotatedDataObject, list):
 
     "A list of states available for a particular character type/format."
 
     def __init__(self, *args, **kwargs):
-        IdTagged.__init__(self, *args, **kwargs)
+        base.AnnotatedDataObject.__init__(self, label=kwargs.get('label'), oid=kwargs.get('oid'))
         list.__init__(self, *args)
         self.missing = None
         self.symbol_synonyms = {}
         self.case_sensitive = kwargs.get('case_sensitive', False)
+
+    def __deepcopy__(self, memo):
+        o = base.AnnotatedDataObject.__deepcopy__(self, memo)
+        for sae in self:
+            o.append(copy.deepcopy(sae, memo))
+        return o
 
     def get_state(self, attr_name, value):
         "Returns state in self in which attr_name equals value."
@@ -214,10 +311,10 @@ class StateAlphabet(IdTagged, list):
 
     def id_state_map(self):
         "Returns dictionary of element id's to state objects."
-        map = {}
+        smap = {}
         for state in self:
-            map[state.oid] = state
-        return map
+            smap[state.oid] = state
+        return smap
 
     def fundamental_states(self):
         "Returns list of fundamental states of this alphabet"
@@ -261,6 +358,57 @@ class StateAlphabet(IdTagged, list):
         except:
             return False
 
+    def is_exact_correspondence(self,
+            other,
+            accept_other_as_subset=False,
+            symbols_to_ignore=None):
+        n1 = len(self)
+        n2 = len(other)
+        if n1 > n2:
+            if accept_other_as_subset:
+                sa1 = self
+                sa2 = other
+            else:
+                return False
+        elif n1 < n2:
+            return False
+        else:
+            sa1 = self
+            sa2 = other
+        match = True
+        f1 = set(sa1)
+        f2 = set(sa2)
+        if symbols_to_ignore is None:
+            symbols_to_ignore = []
+        for m1 in f1:
+            if m1.symbol in symbols_to_ignore:
+                continue
+            member_match = False
+            for m2 in f2:
+                if m1.is_exact_correspondence(m2):
+                    member_match = True
+                    f2.remove(m2)
+                    break
+            if not member_match:
+                match = False
+                break
+        f1 = set(sa1)
+        f2 = set(sa2)
+        if match:
+            for m2 in f2:
+                if m2.symbol in symbols_to_ignore:
+                    continue
+                member_match = False
+                for m1 in f1:
+                    if m1.is_exact_correspondence(m2):
+                        member_match = True
+                        break
+                if not member_match:
+                    match = False
+                    break
+
+        return match
+
 ###############################################################################
 ## Pre-defined State Alphabets
 
@@ -270,13 +418,12 @@ class FixedStateAlphabet(StateAlphabet):
         StateAlphabet.__init__(self, *args, **kwargs)
 
     def __deepcopy__(self, memo):
-        o = self
-        memo[id(self)] = o
-        return o
+        memo[id(self)] = self
+        return self
 
 def _add_iupac(alphabet, states, ambig):
     for sym in states:
-        sae = StateAlphabetElement(symbol=sym)
+        sae = FixedStateAlphabetElement(symbol=sym)
         alphabet.append(sae)
         if sym == '-':
             alphabet.gap = sae
@@ -285,7 +432,7 @@ def _add_iupac(alphabet, states, ambig):
 
     for a in ambig:
         k, v = a[0], a[1]
-        sae = StateAlphabetElement(symbol=k,
+        sae = FixedStateAlphabetElement(symbol=k,
                                    multistate=StateAlphabetElement.AMBIGUOUS_STATE,
                                    member_states=alphabet.get_states(symbols=v))
         alphabet.append(sae)
@@ -310,6 +457,11 @@ class DnaStateAlphabet(FixedStateAlphabet):
               ("H",('A', 'C', 'T')),
               ("D", ('A', 'G', 'T')),
               ("B", ('C', 'G', 'T')),
+              # Added 'X', 2012-07-17: this is how Rutger's BioPhylo treats 'X",
+              # and this definition is to allow for state alphabet
+              # equivalency with files produced by that library
+              # have not checked how this interacts with 'symbol_synonyms' below
+              ("X",('A', 'C', 'G', 'T')),
              )
     unknown_state_symbol = 'N'
 
@@ -333,6 +485,11 @@ class RnaStateAlphabet(FixedStateAlphabet):
               ("H",('A', 'C', 'U')),
               ("D", ('A', 'G', 'U')),
               ("B", ('C', 'G', 'U')),
+              # Added 'X', 2012-07-17: this is how Rutger's BioPhylo treats 'X",
+              # and this definition is to allow for state alphabet
+              # equivalency with files produced by that library
+              # have not checked how this interacts with 'symbol_synonyms' below
+              ("X",('A', 'C', 'G', 'U')),
              )
     unknown_state_symbol = 'N'
 
@@ -365,18 +522,18 @@ class BinaryStateAlphabet(FixedStateAlphabet):
 
     def __init__(self, *args, **kwargs):
         FixedStateAlphabet.__init__(self, *args, **kwargs)
-        self.append(StateAlphabetElement(symbol="0"))
-        self.append(StateAlphabetElement(symbol="1"))
+        self.append(FixedStateAlphabetElement(symbol="0"))
+        self.append(FixedStateAlphabetElement(symbol="1"))
         if kwargs.get("allow_gaps", False):
-            self.append(StateAlphabetElement(symbol="-"))
+            self.append(FixedStateAlphabetElement(symbol="-"))
             self.gap = self[-1]
             if kwargs.get("allow_missing", False):
-                self.missing = StateAlphabetElement(symbol="?",
+                self.missing = FixedStateAlphabetElement(symbol="?",
                                                    multistate=StateAlphabetElement.AMBIGUOUS_STATE,
                                                    member_states=self.get_states(symbols=['0', '1', '-']))
                 self.append(self.missing)
         elif kwargs.get("allow_missing", False):
-            self.missing = StateAlphabetElement(symbol="?",
+            self.missing = FixedStateAlphabetElement(symbol="?",
                                                multistate=StateAlphabetElement.AMBIGUOUS_STATE,
                                                member_states=self.get_states(symbols=['0', '1']))
             self.append(self.missing)
@@ -406,14 +563,14 @@ INFINITE_SITES_STATE_ALPHABET = InfiniteSitesStateAlphabet()
 ###############################################################################
 ## Data Containers
 
-class CharacterType(IdTagged):
+class CharacterType(base.AnnotatedDataObject):
     """
     A character format or type of a particular column: i.e., maps
     a particular set of character state definitions to a column in a character matrix.
     """
 
     def __init__(self, *args, **kwargs):
-        IdTagged.__init__(self, *args, **kwargs)
+        base.AnnotatedDataObject.__init__(self, label=kwargs.get('label'), oid=kwargs.get('oid'))
         self._state_alphabet = None
         self.id_state_map = None
         self.state_alphabet = kwargs.get("state_alphabet", None)
@@ -430,7 +587,13 @@ class CharacterType(IdTagged):
 
     state_alphabet = property(_get_state_alphabet, _set_state_alphabet)
 
-class CharacterDataCell(Annotated):
+    ## default AnnotatedDataObject.__deepcopy__ works fine
+    def __deepcopy__(self, memo):
+        s = copy.deepcopy(self._state_alphabet)
+        o = base.AnnotatedDataObject.__deepcopy__(self, memo)
+        return o
+
+class CharacterDataCell(base.AnnotatedDataObject):
     """
     A container for that holds the value for a particular cell in a matrix.
 
@@ -439,8 +602,12 @@ class CharacterDataCell(Annotated):
         'character_type' isa CharacterType or None
     """
 
-    def __init__(self, value=None, character_type=None):
-        Annotated.__init__(self)
+    def __init__(self,
+            value=None,
+            character_type=None,
+            label=None,
+            oid=None):
+        base.AnnotatedDataObject.__init__(self, label=label, oid=oid)
         self.value = value
         self.character_type = character_type
 
@@ -459,6 +626,11 @@ class CharacterDataCell(Annotated):
             return NotImplemented
         return not result
 
+    ## default AnnotatedDataObject.__deepcopy__ works fine
+    # def __deepcopy__(self, memo):
+    #     o = base.AnnotatedDataObject.__deepcopy__(self, memo)
+    #     return o
+
 class CharacterDataVector(list, TaxonLinked):
     """A list of character data values for a taxon -- a row of a Character Matrix.
 
@@ -472,6 +644,12 @@ class CharacterDataVector(list, TaxonLinked):
         list.__init__(self, *args)
         TaxonLinked.__init__(self, **kwargs)
         self.string_sep = ''
+
+    def __deepcopy__(self, memo):
+        o = TaxonLinked.__deepcopy__(self, memo)
+        for v in self:
+            o.append(copy.deepcopy(v, memo))
+        return o
 
     def set_cell_by_index(self, column_index, cell):
         """
@@ -493,15 +671,33 @@ class CharacterDataVector(list, TaxonLinked):
     def __str__(self):
         return str(self.symbols_as_string())
 
-class CharacterDataMap(dict, Annotated):
+class CharacterDataMap(dict, base.AnnotatedDataObject):
     """
     An annotable dictionary with Taxon objects as keys and
     CharacterDataVectors objects as values.
     """
 
-    def __init__(self):
+    def __init__(self, label=None, oid=None):
         dict.__init__(self)
-        Annotated.__init__(self)
+        base.AnnotatedDataObject.__init__(self,
+                label=label,
+                oid=oid)
+
+    def __deepcopy__(self, memo):
+        o = base.AnnotatedDataObject.__deepcopy__(self, memo)
+        for k, v in self.iteritems():
+            o[copy.deepcopy(k, memo)] = copy.deepcopy(v, memo)
+        return o
+
+    def _get_vector_size(self):
+        """
+        Returns number of characters in *first* sequence.
+        """
+        if len(self):
+            return len(self.values()[0])
+        else:
+            return 0
+    vector_size = property(_get_vector_size, None, None, "Returns number of characters in *first* sequence")
 
     def __setitem__(self, key, value):
         """
@@ -527,9 +723,9 @@ class CharacterDataMap(dict, Annotated):
                 self[taxon].extend(other_map[label_taxon_map[taxon.label]])
 
     def extend(self,
-        other_map,
-        overwrite_existing=False,
-        extend_existing=False):
+            other_map,
+            overwrite_existing=False,
+            extend_existing=False):
         """
         Extends this matrix by adding taxa and characters from the given
         matrix to this one.  If `overwrite_existing` is True and a taxon
@@ -561,7 +757,7 @@ class CharacterDataMap(dict, Annotated):
 ###############################################################################
 ## Subset of Character (Columns)
 
-class CharacterSubset(IdTagged):
+class CharacterSubset(base.AnnotatedDataObject):
     """
     Tracks definition of a subset of characters.
     """
@@ -575,7 +771,7 @@ class CharacterSubset(IdTagged):
                of column positions that constitute this subset.
 
         """
-        IdTagged.__init__(self, *args, **kwargs)
+        base.AnnotatedDataObject.__init__(self, label=kwargs.get('label'), oid=kwargs.get('oid'))
         self.character_indices = set(kwargs.get("character_indices", []))
 
     def __len__(self):
@@ -584,11 +780,112 @@ class CharacterSubset(IdTagged):
     def __iter__(self):
         return iter(self.character_indices)
 
+    def __deepcopy__(self, memo):
+        o = base.AnnotatedDataObject.__deepcopy__(self, memo)
+        memo[id(self)] = o
+        o.annotations = copy.deepcopy(self.annotations, memo)
+        memo[id(self.annotations)] = o.annotations
+
 ###############################################################################
 ## Base Character Matrix
 
 class CharacterMatrix(TaxonSetLinked, iosys.Readable, iosys.Writeable):
     "Character data container/manager manager."
+
+    def _parse_from_stream(cls, stream, schema, **kwargs):
+        from dendropy.dataobject.dataset import DataSet
+        index = kwargs.get("matrix_offset", 0)
+        kwargs["exclude_chars"] = False
+        kwargs["exclude_trees"] = True
+        if 'data_type' not in kwargs and 'char_matrix_type' not in kwargs:
+            kwargs['char_matrix_type'] = cls
+        d = DataSet(stream=stream, schema=schema, **kwargs)
+        if len(d.char_matrices) == 0:
+            raise ValueError("No character data in data source")
+        if index >= len(d.char_matrices):
+            raise IndexError("Character matrix of offset %d specified, but data source only has %d matrices defined (max. index=%d)" \
+                % (index, len(d.char_matrices), len(d.char_matrices)-1))
+        if not isinstance(d.char_matrices[index], cls):
+            raise ValueError("Character data found was of type '%s' (object is of type '%s')" %
+                    (d.char_matrices[index].__class__.__name__, cls.__name__))
+        return d.char_matrices[index]
+    _parse_from_stream = classmethod(_parse_from_stream)
+
+    def concatenate(cls, char_matrices):
+        """
+        Creates and returns a single character matrix from multiple
+        CharacterMatrix objects specified as a list, 'char_matrices'.
+        All the CharacterMatrix objects in the list must be of the
+        same type, and share the same TaxonSet reference. All taxa
+        must be present in all alignments, all all alignments must
+        be of the same length. Component parts will be recorded as
+        character subsets.
+        """
+        taxon_set = char_matrices[0].taxon_set
+        nseqs = len(char_matrices[0])
+        concatenated_chars = cls(taxon_set=taxon_set)
+        pos_start = 0
+        for cidx, cm in enumerate(char_matrices):
+            if cm.taxon_set is not taxon_set:
+                raise ValueError("Different `taxon_set` references in matrices to be merged")
+            if len(cm) != len(taxon_set):
+                raise ValueError("Number of sequences not equal to the number of taxa")
+            if len(cm) != nseqs:
+                raise ValueError("Different number of sequences across alignments: %d (expecting %d based on first matrix)" % (len(cm), nseqs))
+            v1 = len(cm[0])
+            for t, s in cm.items():
+                if len(s) != v1:
+                    raise ValueError("Unequal length sequences in character matrix %d".format(cidx+1))
+            concatenated_chars.extend(cm,
+                    extend_existing=True,
+                    overwrite_existing=False)
+            if cm.label is None:
+                new_label = "locus%03d" % cidx
+            else:
+                new_label = cm.label
+            cs_label = new_label
+            i = 2
+            while cs_label in concatenated_chars.character_subsets:
+                label = "%s_%03d" % (new_label, i)
+                i += 1
+            character_indices = range(pos_start, pos_start + cm.vector_size)
+            pos_start += cm.vector_size
+            concatenated_chars.new_character_subset(character_indices=character_indices,
+                    label=cs_label)
+        return concatenated_chars
+    concatenate = classmethod(concatenate)
+
+    def concatenate_from_streams(cls, streams, schema, **kwargs):
+        """
+        Read a character matrix from each file object given in `streams`,
+        assuming data format/schema `schema`, and passing any keyword arguments
+        down to the underlying specialized reader. Merge the character matrices
+        and return the combined character matrix. Component parts will be
+        recorded as character subsets.
+        """
+        if 'taxon_set' not in kwargs:
+            taxon_set = TaxonSet()
+            kwargs["taxon_set"] = taxon_set
+        else:
+            taxon_set = kwargs["taxon_set"]
+        char_matrices = []
+        for stream in streams:
+            char_matrices.append(cls.get_from_stream(stream,
+                schema=schema, **kwargs))
+        return cls.concatenate(char_matrices)
+    concatenate_from_streams = classmethod(concatenate_from_streams)
+
+    def concatenate_from_paths(cls, paths, schema, **kwargs):
+        """
+        Read a character matrix from each file path given in `paths`, assuming
+        data format/schema `schema`, and passing any keyword arguments down to
+        the underlying specialized reader. Merge the and return the combined
+        character matrix. Component parts will be recorded as character
+        subsets.
+        """
+        streams = [open(path, "rU") for path in paths]
+        return cls.concatenate_from_streams(streams, schema, **kwargs)
+    concatenate_from_paths = classmethod(concatenate_from_paths)
 
     def __init__(self, *args, **kwargs):
         """__init__ calls TaxonSetLinked.__init__ for handling of `oid`, `label` and `taxon_set` keyword arguments.
@@ -605,7 +902,7 @@ class CharacterMatrix(TaxonSetLinked, iosys.Readable, iosys.Writeable):
                                 oid=kwargs.get("oid", None))
         self.taxon_seq_map = CharacterDataMap()
         self.character_types = []
-        self.character_subsets = {}
+        self.character_subsets = containers.OrderedCaselessDict()
         self.markup_as_sequences = True
         if len(args) > 1:
             raise error.TooManyArgumentsError(func_name=self.__class__.__name__, max_args=1, args=args)
@@ -624,15 +921,33 @@ class CharacterMatrix(TaxonSetLinked, iosys.Readable, iosys.Writeable):
         if "label" in kwargs:
             self.label = kwargs["label"]
 
+    ## default AnnotatedDataObject.__deepcopy__ works fine
+    # def __deepcopy__(self, memo):
+    #     # memo[id(self.taxon_seq_map)] = None
+    #     # memo[id(self.character_types)] = None
+    #     # memo[id(self.character_subsets)] = None
+    #     o = TaxonSetLinked.__deepcopy__(self, memo)
+    #     return o
+
+    def add_character_subset(self, char_subset):
+        """
+        Adds a CharacterSubset object. Raises an error if one already exists
+        with the same label.
+        """
+        label = char_subset.label
+        if label in self.character_subsets:
+            raise ValueError("Character subset '%s' already defined" % label)
+        self.character_subsets[label] = char_subset
+        return self.character_subsets[label]
+
     def new_character_subset(self, label, character_indices):
         """
         Defines a set of character (columns) that make up a character set.
-        Column indices are 0-based.
+        Raises an error if one already exists with the same label. Column
+        indices are 0-based.
         """
-        self.character_subsets[label] = CharacterSubset(
-                character_indices=character_indices,
-                label=label)
-        return self.character_subsets[label]
+        cs = CharacterSubset(character_indices=character_indices, label=label)
+        return self.add_character_subset(cs)
 
     def create_taxon_to_state_set_map(self, char_indices=None):
         """Returns a dictionary that maps taxon objects to lists of sets of state
@@ -661,13 +976,16 @@ class CharacterMatrix(TaxonSetLinked, iosys.Readable, iosys.Writeable):
         return taxon_to_state_indices
 
     def clone_from(self, *args):
-        "\TODO: may need to check that we are not overwriting oid"
+        "TODO: may need to check that we are not overwriting oid"
         if len(args) > 1:
             raise error.TooManyArgumentsError(func_name=self.__class__.__name__, max_args=1, args=args)
         elif len(args) == 1:
             if isinstance(args[0],  self.__class__):
                 ca = copy.deepcopy(args[0])
-                self.__dict__ = ca.__dict__
+                for k, v in ca.__dict__.iteritems():
+                    if k not in ["_annotations"]:
+                        self.__dict__[k] = v
+                self.annotations = ca.annotations
             else:
                 raise error.InvalidArgumentValueError(func_name=self.__class__.__name__, arg=args[0])
         return self
@@ -681,22 +999,12 @@ class CharacterMatrix(TaxonSetLinked, iosys.Readable, iosys.Writeable):
         be specified using the `matrix_offset` keyword (defaults to 0, i.e., first
         character matrix).
         """
-        from dendropy.dataobject.dataset import DataSet
-        index = kwargs.get("matrix_offset", 0)
-        kwargs["exclude_chars"] = False
-        kwargs["exclude_trees"] = True
-        if 'data_type' not in kwargs and 'char_matrix_type' not in kwargs:
-            kwargs['char_matrix_type'] = self.__class__
-        d = DataSet(stream=stream, schema=schema, **kwargs)
-        if len(d.char_matrices) == 0:
-            raise ValueError("No character data in data source")
-        if index >= len(d.char_matrices):
-            raise IndexError("Character matrix of offset %d specified, but data source only has %d matrices defined (max. index=%d)" \
-                % (index, len(d.char_matrices), len(d.char_matrices)-1))
-        if not isinstance(self, d.char_matrices[index].__class__):
-            raise ValueError("Character data found was of type '%s' (object is of type '%s')" %
-                    (d.char_matrices[index].__class__.__name__, self.__class__.__name__))
-        self.clone_from(d.char_matrices[index])
+        warnings.warn("Repopulating a CharacterMatrix is now deprecated. Instantiate a new instance from the source instead.",
+                DeprecationWarning)
+        m = self.__class__._parse_from_stream(stream=stream,
+                schema=schema,
+                **kwargs)
+        return self.clone_from(m)
 
     def write(self, stream, schema, **kwargs):
         """
@@ -780,8 +1088,8 @@ class CharacterMatrix(TaxonSetLinked, iosys.Readable, iosys.Writeable):
         of columns given by the 0-based indices in `indices`.
         Note that this new matrix will still reference the same taxon set.
         """
-        clone = self.__class__()
-        clone.clone_from(self)
+        clone = self.__class__(self)
+        # clone.clone_from(self)
         for vec in clone.taxon_seq_map.values():
             for cell_idx in range(len(vec)-1, -1, -1):
                 if cell_idx not in indices:
@@ -819,12 +1127,28 @@ class CharacterMatrix(TaxonSetLinked, iosys.Readable, iosys.Writeable):
             return []
         return None
 
+    def prune_taxa(self, taxa, update_taxon_set=False):
+        """
+        Removes given taxa from matrix. If `preserve_taxon_set` is
+        `True`, then the taxa are removed from the associated TaxonSet
+        object as well. Otherwise this is not modified (default).
+        """
+        for taxon in taxa:
+            if taxon in self.taxon_seq_map:
+                del self.taxon_seq_map[taxon]
+                if update_taxon_set and taxon in self.taxon_set:
+                    self.taxon_set.remove(taxon)
+
     # following allows a CharacterMatrix object to simulate a dictionary
     # by `passing-through` calls to the underlying character map
 
     def __len__(self):
         "Dictionary interface implementation for direct access to character map."
         return len(self.taxon_seq_map)
+
+    def _get_vector_size(self):
+        return self.taxon_seq_map.vector_size
+    vector_size = property(_get_vector_size, None, None, "Returns number of characters in *first* sequence")
 
     def __getitem__(self, key):
         "Dictionary interface implementation for direct access to character map."
@@ -983,26 +1307,6 @@ class ContinuousCharacterMatrix(CharacterMatrix):
         "See CharacterMatrix.__init__ documentation"
         CharacterMatrix.__init__(self, *args, **kwargs)
 
-    def __deepcopy__(self, memo):
-        o = TaxonSetLinked.__deepcopy__(self, memo)
-        for k, v in self.__dict__.iteritems():
-            if k not in ["taxon_set",
-                         "_oid",
-                         "taxon_seq_map"]:
-                o.__dict__[k] = copy.deepcopy(v, memo)
-        for taxon, cdv in self.taxon_seq_map.items():
-            otaxon = memo[id(taxon)]
-            ocdv = CharacterDataVector(oid=cdv.oid, label=cdv.label, taxon=otaxon)
-            for cell in cdv:
-                if cell.character_type is not None:
-                    character_type = memo[id(cell.character_type)]
-                else:
-                    character_type = None
-                ocdv.append(CharacterDataCell(value=cell.value, character_type=character_type))
-            o.taxon_seq_map[otaxon] = ocdv
-            memo[id(self.taxon_seq_map[taxon])] = o.taxon_seq_map[otaxon]
-        return o
-
 class DiscreteCharacterMatrix(CharacterMatrix):
     """Character data container/manager manager.
 
@@ -1039,6 +1343,40 @@ class DiscreteCharacterMatrix(CharacterMatrix):
                 symbol = str(value)
             self[taxon].append(CharacterDataCell(value=self.default_symbol_state_map[symbol]))
 
+    def remap_to_state_alphabet_by_symbol(self,
+            state_alphabet,
+            purge_other_state_alphabets=True):
+        """
+        All entities with any reference to a state alphabet will be have the
+        reference reassigned to state alphabet ``sa``, and all entities with
+        any reference to a state alphabet element will be have the reference
+        reassigned to any state alphabet element in ``sa`` that has the same
+        symbol. Raises KeyError if no matching symbol can be found.
+        """
+        symbol_state_map = state_alphabet.symbol_state_map()
+        for vi, vec in enumerate(self.taxon_seq_map.values()):
+            for ci, cell in enumerate(vec):
+                cell.value = symbol_state_map[cell.value.symbol]
+        for ct in self.character_types:
+            ct.state_alphabet = state_alphabet
+        if purge_other_state_alphabets:
+            self.state_alphabets = [state_alphabet]
+            self.default_state_alphabet = state_alphabet
+
+    def remap_to_default_state_alphabet_by_symbol(self,
+            purge_other_state_alphabets=True):
+        """
+        All entities with any reference to a state alphabet will be have the
+        reference reassigned to the default state alphabet, and all entities
+        with any reference to a state alphabet element will be have the
+        reference reassigned to any state alphabet element in the default
+        state alphabet that has the same symbol. Raises ValueError if no
+        matching symbol can be found.
+        """
+        self.remap_to_state_alphabet_by_symbol(
+                state_alphabet=self.default_state_alphabet,
+                purge_other_state_alphabets=purge_other_state_alphabets)
+
 class StandardCharacterMatrix(DiscreteCharacterMatrix):
     "`standard` data."
 
@@ -1050,28 +1388,6 @@ class StandardCharacterMatrix(DiscreteCharacterMatrix):
         DiscreteCharacterMatrix.__init__(self, **kwargs)
         if len(args) > 0:
             self.clone_from(*args)
-
-    def __deepcopy__(self, memo):
-        o = TaxonSetLinked.__deepcopy__(self, memo)
-        for k, v in self.__dict__.iteritems():
-            if k not in ["taxon_set",
-                         "_oid",
-                         "taxon_seq_map"]:
-                o.__dict__[k] = copy.deepcopy(v, memo)
-
-        for taxon, cdv in self.taxon_seq_map.items():
-            otaxon = memo[id(taxon)]
-            ocdv = CharacterDataVector(oid=cdv.oid, label=cdv.label, taxon=otaxon)
-            for cell in cdv:
-                if cell.character_type is not None:
-                    character_type = memo[id(cell.character_type)]
-                else:
-                    character_type = None
-                ocdv.append(CharacterDataCell(value=memo[id(cell.value)], character_type=character_type))
-            o.taxon_seq_map[otaxon] = ocdv
-            memo[id(self.taxon_seq_map[taxon])] = o.taxon_seq_map[otaxon]
-
-        return o
 
     def extend(self,
                other_matrix,
@@ -1110,35 +1426,10 @@ class FixedAlphabetCharacterMatrix(DiscreteCharacterMatrix):
             self.clone_from(*args)
 
     def __deepcopy__(self, memo):
-        o = TaxonSetLinked.__deepcopy__(self, memo)
-        o.state_alphabets = self.state_alphabets
-        memo[id(self.state_alphabets)] = o.state_alphabets
-        o.default_state_alphabet = self.default_state_alphabet
-        memo[id(self.default_state_alphabet)] = o.default_state_alphabet
-        o._default_symbol_state_map = self._default_symbol_state_map
-        memo[id(self._default_symbol_state_map)] = o._default_symbol_state_map
-        o.character_types = copy.deepcopy(self.character_types, memo)
-        for taxon, cdv in self.taxon_seq_map.items():
-            otaxon = memo[id(taxon)]
-            ocdv = CharacterDataVector(oid=cdv.oid, label=cdv.label, taxon=otaxon)
-            for cell in cdv:
-                if cell.character_type is not None:
-                    character_type = memo[id(cell.character_type)]
-                else:
-                    character_type = None
-                ocdv.append(CharacterDataCell(value=cell.value, character_type=character_type))
-            o.taxon_seq_map[otaxon] = ocdv
-            memo[id(self.taxon_seq_map[taxon])] = o.taxon_seq_map[otaxon]
-        for k, v in self.__dict__.iteritems():
-            if k not in ["taxon_set",
-                         "_oid",
-                         "state_alphabets",
-                         "default_state_alphabet",
-                         "_default_symbol_state_map",
-                         "taxon_seq_map",
-                         "character_types"]:
-                o.__dict__[k] = copy.deepcopy(v, memo)
-        return o
+        memo[id(self.default_state_alphabet)] = self.default_state_alphabet
+        memo[id(self.state_alphabets)] = list(self.state_alphabets)
+        # memo[id(self._default_symbol_state_map)] = self._default_symbol_state_map
+        return DiscreteCharacterMatrix.__deepcopy__(self, memo)
 
 class DnaCharacterMatrix(FixedAlphabetCharacterMatrix):
     "DNA nucleotide data."

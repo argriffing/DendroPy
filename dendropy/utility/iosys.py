@@ -21,7 +21,13 @@ Base classes for all readers/parsers and formatters/writers.
 """
 
 import os
+import sys
+import re
+from urllib import urlopen
+from HTMLParser import HTMLParser
+
 from cStringIO import StringIO
+from dendropy.dataobject import base
 from dendropy.utility import error
 
 ###############################################################################
@@ -57,6 +63,35 @@ def extract_kwarg(kwdict, kw, default=None):
         return default
 
 ###############################################################################
+## Helpers
+
+# class MLStripper(HTMLParser):
+#     def __init__(self):
+#         self.reset()
+#         self.fed = []
+#     def handle_data(self, d):
+#         self.fed.append(d)
+#     def get_data(self):
+#         return ''.join(self.fed)
+
+# # note that this strips &amp; etc. as well
+# def strip_markup(html):
+#     s = MLStripper()
+#     s.feed(html)
+#     return s.get_data()
+
+def read_url(url, strip_markup=False):
+    """
+    Return contents of url as string.
+    """
+    s = urlopen(url)
+    text = s.read()
+    if strip_markup:
+        return re.sub(r'<[^>]*?>', '', text)
+    else:
+        return text
+
+###############################################################################
 ## IOService
 
 class IOService(object):
@@ -83,7 +118,11 @@ class IOService(object):
         - `exclude_chars`: Characters in the source will be skipped.
         """
         self.dataset = extract_kwarg(kwargs, "dataset", None)
-        self.attached_taxon_set = extract_kwarg(kwargs, "taxon_set", None)
+        if self.dataset is not None:
+            self.attached_taxon_set = self.dataset.attached_taxon_set
+        else:
+            self.attached_taxon_set = None
+        self.attached_taxon_set = extract_kwarg(kwargs, "taxon_set", self.attached_taxon_set)
         self.exclude_trees = extract_kwarg(kwargs, "exclude_trees", False)
         self.exclude_chars = extract_kwarg(kwargs, "exclude_chars", False)
 
@@ -167,14 +206,23 @@ class Readable(object):
     Data object that can be instantiated using a `DataReader` service.
     """
 
+    def _parse_from_stream(cls, stream, schema, **kwargs):
+        """
+        Subclasses need to implement this method to create
+        and return and instance of themselves read from the
+        stream.
+        """
+        raise NotImplementedError
+    _parse_from_stream = classmethod(_parse_from_stream)
+
     def get_from_stream(cls, src, schema, **kwargs):
         """
         Factory method to return new object of this class from file-like
         object `src`.
         """
-        readable = cls(**kwargs)
-        readable.read_from_stream(src, schema, **kwargs)
-        return readable
+        return cls._parse_from_stream(stream=src,
+                schema=schema,
+                **kwargs)
     get_from_stream = classmethod(get_from_stream)
 
     def get_from_path(cls, src, schema, **kwargs):
@@ -182,19 +230,38 @@ class Readable(object):
         Factory method to return new object of this class from file
         specified by string `src`.
         """
-        readable = cls(**kwargs)
-        readable.read_from_path(src, schema, **kwargs)
-        return readable
+        fsrc = open(src, "rU")
+        return cls._parse_from_stream(stream=fsrc,
+                schema=schema,
+                **kwargs)
     get_from_path = classmethod(get_from_path)
 
     def get_from_string(cls, src, schema, **kwargs):
         """
         Factory method to return new object of this class from string `src`.
         """
-        readable = cls(**kwargs)
-        readable.read_from_string(src, schema, **kwargs)
-        return readable
+        ssrc = StringIO(src)
+        return cls._parse_from_stream(stream=ssrc,
+                schema=schema,
+                **kwargs)
     get_from_string = classmethod(get_from_string)
+
+    def get_from_url(cls, src, schema, strip_markup=False, **kwargs):
+        """
+        Factory method to return a new object of this class from
+        URL given by `src`.
+        """
+        text = read_url(src, strip_markup=strip_markup)
+        ssrc = StringIO(text)
+        try:
+            return cls._parse_from_stream(stream=ssrc,
+                    schema=schema,
+                    **kwargs)
+        except error.DataParseError:
+            sys.stderr.write(text)
+            raise
+
+    get_from_url = classmethod(get_from_url)
 
     def __init__(self, *args, **kwargs):
         pass
@@ -205,27 +272,30 @@ class Readable(object):
 
             # checks that `schema` keyword argument is specified, and then
             # calls self.read()
-        
-        If `stream` is not specified then `source_string` and `source_filepath`
-            kwarg arguments are checked. The effect of thes is similar to calling
-            read_from_string and read_from_path
+
+        If `stream` is not specified, then nothing happens: unless the
+        data object was populated through other means, and empty data
+        object will the result (typically used as a starting point
+        for population unit by unit).
         """
         if "stream" in kwargs:
             stream = kwargs["stream"]
             del(kwargs["stream"])
             schema = require_format_from_kwargs(kwargs)
             self.read(stream=stream, schema=schema, **kwargs)
-        elif "source_string" in kwargs:
-            as_str = kwargs["source_string"]
-            del(kwargs["source_string"])
-            kwargs["stream"] = StringIO(as_str)
-            return self.process_source_kwargs(**kwargs)
-        elif "source_file" in kwargs:
-            fp = kwargs["source_filepath"]
-            fo = open(os.path.expandvars(os.path.expanduser(filepath)), "rU")
-            del(kwargs["source_filepath"])
-            kwargs["stream"] = fo
-            return self.process_source_kwargs(**kwargs)
+        # else:
+        #     from pudb import set_trace; set_trace()
+        # elif "source_string" in kwargs:
+        #     as_str = kwargs["source_string"]
+        #     del(kwargs["source_string"])
+        #     kwargs["stream"] = StringIO(as_str)
+        #     return self.process_source_kwargs(**kwargs)
+        # elif "source_file" in kwargs:
+        #     fp = kwargs["source_filepath"]
+        #     fo = open(os.path.expandvars(os.path.expanduser(filepath)), "rU")
+        #     del(kwargs["source_filepath"])
+        #     kwargs["stream"] = fo
+        #     return self.process_source_kwargs(**kwargs)
 
     def read(self, stream, schema, **kwargs):
         """
@@ -252,6 +322,14 @@ class Readable(object):
         """
         Reads a string object.
         """
+        s = StringIO(src_str)
+        return self.read(stream=s, schema=schema, **kwargs)
+
+    def read_from_url(self, url, schema, **kwargs):
+        """
+        Reads a URL source.
+        """
+        src_str = read_url(url)
         s = StringIO(src_str)
         return self.read(stream=s, schema=schema, **kwargs)
 

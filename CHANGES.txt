@@ -1,3 +1,111 @@
+Release 3.12.0
+--------------
+
+New Features
+^^^^^^^^^^^^
+
+    - New infrastructure for metadata annotations: AnnotationSet and Annotation.
+    - [NeXML] Full support of NeXML 0.9 metadata parsing and writing.
+    - `get_from_url()` and `read_from_url()` methods now allow for reading of phylogenetic data from URL's.
+    - Added GBIF interoperability module ("``dendropy.interop.gbif``").
+    - Added GenBank interoperability module ("``dendropy.interop.genbank``").
+
+Bug Fixes
+^^^^^^^^^
+
+    - Splits hash calculations now correctly deal with unrooted incomplete leaf-set trees.
+
+Changes
+^^^^^^^
+
+    - Annotations/metadata API significantly changed. Affects not only parsing
+      of NeXML-formatted data by NEXUS/NEWICK as well (metadata no longer
+      stored in dictionaries, by AnnotationSet collections of Annotation
+      objects).
+    - [NEXUS/NEWICK] ``suppress_internal_node_taxa`` keyword now actually
+      instantiates Taxon objects from internal node labels when 'False', but
+      defaults to `True` for consistency with legacy behavior.
+    - [NEXUS/NEWICK] Faster parsing of tree files.
+    - NCBI module ("``dendropy.interop.ncbi``") has been deprecated. Use "``dendropy.interop.genbank``" instead.
+
+
+Release 3.11.0
+--------------
+
+New Features
+^^^^^^^^^^^^
+
+    - New application script for concatenation of branch labels from across
+      multiple input trees: `sumlabels.py`.
+    - New interoperability class `dendropy.interop.seqgen.SeqGen`:
+      wrapper for Seq-Gen integrated into library.
+    - New interoperability function `dendropy.interop.muscle.muscle_align()`:
+      wrapper for MUSCLE alignment.
+    - New interoperability class `dendropy.interop.raxml.RaxmlRunner`:
+      wrapper for RAxML.
+    - `prune_taxa()` method added to `CharacterMatrix`.
+    - Math modules moved to their own subpackage: `dendropy.mathlib`.
+    - New module for matrix and vector computations: `dendropy.mathlib.linearalg`.
+    - New module for statistical distance calculation: `dendropy.mathlib.distance`.
+    - Family of Mahalanobis distance calculation functions in
+      `dendropy.mathlib.distance`: `squared_mahalanobis`,
+      `squared_mahalanobis_1d`, `mahalanobis`, `mahalanobis_1d`.
+    - Better documentation and examples of geodispersal analysis of Lieberman
+        and Eldredge (see extras/geodispersal subdirectory).
+
+Release 3.10.1
+--------------
+
+Bug Fixes
+^^^^^^^^^
+
+    - Split orientation regression bug introduced in 3.10.0 fixed (affected SumTrees and other split comparisons when dealing with unrooted trees).
+
+Release 3.10.0
+--------------
+
+New Features
+^^^^^^^^^^^^
+
+    - Support for writing preamble blocks in NEXUS format.
+    - Support for writing character subsets in NEXUS.
+    - Support for user customization of edge label formatting.
+    - `find_missing_splits()` method added to `dendropy.Tree()`.
+    - `concatenate()`, `concatenate_from_paths()`, and
+      `concatenate_from_streams()` methods added to CharacterMatrix and derived
+      classes: allows for creation of new CharacterMatrix or subtype from
+      multiple character matrices or file sources. Sub-components or alignments
+      will be stored as character subsets in the concatenated matrices (and can
+      be re-exported as individual matrices using `export_character_subset()`.
+
+Bug Fixes
+^^^^^^^^^
+
+    - Log probability of coalescent frames/trees now calculated correctly [PLEASE REVISIT PREVIOUS ANALYSIS IF YOU USED THIS FEATURE!].
+    - Strict PHYLIP format now correct.
+
+
+Release 3.9.0
+-------------
+
+New Features
+^^^^^^^^^^^^
+
+    - Phylogenetic independent contrasts (PIC) analysis can now be carried out using the ``dendropy.continuous.PhylogeneticIndependentContrasts`` class.
+    - Simplified contained coalescent (gene tree in species tree) simulation.
+
+Changes
+^^^^^^^
+
+    - Keyword arguments to ``as_string()``, ``write_to_path()``, ``write_to_file``, etc. methods have been tweaked to become more consistent for NEXUS and Newick formats. Previous keywords are still supported, but will be deprecated. The new set of keyword arguments supported can be seen in the :ref:``NEXUS and Newick writing customization <Customizing_Writing_NEXUS_and_Newick>`` section.
+    - NEXUS and Newick formats now default to case-insensitive taxon labels; specify ``case_insensitive_taxon_labels=False`` for case-sensitivity.
+
+Bug Fixes
+^^^^^^^^^
+
+    - Reading interleaved character matrices no longer results in the following block being skipped (NEXUS).
+    - Caught OverflowError when calculating summary statistics.
+
 Release 3.8.1
 -------------
 
@@ -25,28 +133,28 @@ SumTrees
 ^^^^^^^^
 
     - SumTrees can now summarize edge lengths on target trees in different ways:
-        - `-e mean-length`: sets the edge lengths of the target/consensus tree(s) to the mean of the lengths of the corresponding edges of the input trees.
-        - `-e median-length`: sets the edge lengths of the target/consensus tree(s) to the median of the lengths of the corresponding edges of the input trees.
-        - `-e median-age`: adjusts the edge lengths of the target/consensus tree(s) such that the node ages correspond to the median age of corresponding nodes of the input trees [requires rooted ultrametric trees].
-        - `-e mean-age`: adjusts the edge lengths of the target/consensus tree(s) such that the node ages correspond to the mean age of corresponding nodes of the input trees [requires rooted ultrametric trees].
+        - ``-e mean-length``: sets the edge lengths of the target/consensus tree(s) to the mean of the lengths of the corresponding edges of the input trees.
+        - ``-e median-length``: sets the edge lengths of the target/consensus tree(s) to the median of the lengths of the corresponding edges of the input trees.
+        - ``-e median-age``: adjusts the edge lengths of the target/consensus tree(s) such that the node ages correspond to the median age of corresponding nodes of the input trees [requires rooted ultrametric trees].
+        - ``-e mean-age``: adjusts the edge lengths of the target/consensus tree(s) such that the node ages correspond to the mean age of corresponding nodes of the input trees [requires rooted ultrametric trees].
     - SumTrees will now annotate nodes with summaries (mean, median, standard deviation, range, 95% highest posterior density, 5% and 95% quantiles, etc.) of the distribution of ages across across input trees if the trees are indicated to be ultrametric with the "``--ultrametric``" flag [requires rooted ultrametric trees].
     - SumTrees will now annotate edges with summaries (mean, median, standard deviation, range, 95% highest posterior density, 5% and 95% quantiles, etc.) of the distribution of edge lengths across across input trees.
-    - SumTrees will now be interpret and handle tree weights if the `--weighted-trees` option is specified.
-    - SumTrees will now report topology frequencies/probabilities, if given the `--trprobs` option.
+    - SumTrees will now be interpret and handle tree weights if the ``--weighted-trees`` option is specified.
+    - SumTrees will now report topology frequencies/probabilities, if given the ``--trprobs`` option.
     - SumTrees can now handle arbitrarily-large numbers of files.
-    - SumTrees creates a rooted consensus tree if input trees are specified to be rooted using the `--rooted-trees` flag (or rooted trees are assumed as with the '--ultrametric' flag).
+    - SumTrees creates a rooted consensus tree if input trees are specified to be rooted using the ``--rooted-trees`` flag (or rooted trees are assumed as with the '--ultrametric' flag).
 
 DendroPy Library
 ^^^^^^^^^^^^^^^^
 
-        - Tree objects can now be rerooted at midpoint (see `Tree.reroot_at_midpoint()`).
-        - Annotations (i.e., attributes of Tree, Node or Edge objects that have had "annotate()" called on them) can now be written as metadata comments ("[&field=value]") when writing NEXUS/NEWICK format if the keyword argument `annotations_as_comments` is used.
-        - When reading in NEXUS/NEWICK format trees, specifying `extract_comment_metadata=True` will result in metadata comments being pulled into dictionary, with keys being fieldnames and values being the field values.
+        - Tree objects can now be rerooted at midpoint (see ``Tree.reroot_at_midpoint()``).
+        - Annotations (i.e., attributes of Tree, Node or Edge objects that have had "annotate()" called on them) can now be written as metadata comments ("[&field=value]") when writing NEXUS/NEWICK format if the keyword argument ``annotations_as_comments`` is used.
+        - When reading in NEXUS/NEWICK format trees, specifying ``extract_comment_metadata=True`` will result in metadata comments being pulled into dictionary, with keys being fieldnames and values being the field values.
         - When reading NEXUS format data, SETS blocks will be processed, and character sets parsed into the relevant CharacterDataMatrix.
         - Character sets (as, for example, parsed out of NEXUS SETS blocks: see above) can be exported as new CharacterDataMatrix objects, and be saved/manipulated/etc. independentally.
-        - When writing in NEXUS or NEWICK formats, the `write_item_comments` keyword argument (`True` or `False`) can control whether extended comments associated with nodes on trees will be written or not.
+        - When writing in NEXUS or NEWICK formats, the ``write_item_comments`` keyword argument (``True`` or ``False``) can control whether extended comments associated with nodes on trees will be written or not.
         - TopologyCounter class added to dendropy.treesum: allows for tracking of topology frequencies.
-        - `treesplits.tree_from_splits()` allows constructing of (topology-only) trees from a set of splits.
+        - ``treesplits.tree_from_splits()`` allows constructing of (topology-only) trees from a set of splits.
         - Most functionality that used to be 'dendropy.treemanip' has now been migrated as native methods of the dendropy.Tree class. 'dendropy.treemanip' will be deprecated.
         - Trees can now be pruned based on a list of taxa labels to remove or keep (previously, the methods would only accept lists of Taxon objects).
 
@@ -206,7 +314,7 @@ New Features
     * Native ASCII tree plotting is available as the "``as_ascii_plot()``" method of a ``Tree`` object.
     * Some tree distance functions integrated as native methods of ``Tree``: ``symmetric_difference``, ``false_positives_and_negatives``, ``robinson_foulds_distance``, ``euclidean_distance``.
     * ``Tree()`` objects can now be cloned with a custom ``TaxonSet`` object by passing it to the constructor via the ``taxon_set`` keyword argument.
-    * Interoperability with the `ETE <http://ete.cgenomics.org/>`_ library via the ``dendropy.interop.ete`` module.
+    * Interoperability with the ``ETE <http://ete.cgenomics.org/>``_ library via the ``dendropy.interop.ete`` module.
 
 Release 3.1.3
 -------------
@@ -245,12 +353,12 @@ New Features
         >>> import dendropy
         >>> cytb = dendropy.DnaCharacterMatrix.get_from_path("data.fas", "fasta")
 
-      but requires supplemental keyword argument, '``data_type``' to specify type of data ('``dna``', '``rna``', '``protein``', etc.) when using `DataSet`::
+      but requires supplemental keyword argument, '``data_type``' to specify type of data ('``dna``', '``rna``', '``protein``', etc.) when using ``DataSet``::
 
         >>> import dendropy
         >>> cytb_ds = dendropy.DataSet.get_from_path("data.fas", "fasta", data_type="dna")
 
-    * Implemented full-featured PHYLIP reader and enhanced PHYLIP writer, for both strict and relaxed modes (PHYLIP reader requires 'data_type' keyword argument when using `DataSet`)::
+    * Implemented full-featured PHYLIP reader and enhanced PHYLIP writer, for both strict and relaxed modes (PHYLIP reader requires 'data_type' keyword argument when using ``DataSet``)::
 
         >>> import dendropy
         >>> cytb = dendropy.DnaCharacterMatrix.get_from_path("data.dat", "phylip")
